@@ -261,7 +261,13 @@ agentic-direct service. If you run the buyer's server or CLI by hand, copy
 that override into the buyer's `.env` first. Its CrewAI flows also need an
 LLM key.
 
-### Last verified result (Linux VM, Python 3.12.3, uv 0.13.9)
+### Last verified result (Linux VM, uv-managed CPython 3.12.16, uv 0.13.9)
+
+This was a fresh clone with an empty `HOME` and no uv on `PATH`, so
+`./sandbox/run.sh` installed uv, Python and all dependencies from scratch.
+Then `./sandbox/scenarios.sh --buyer-agent <fresh buyer-agent clone>` ran.
+`strace -e connect` on the seller process for a full scenario run recorded
+**no** outbound connections.
 
 ```text
 [PASS] 1. Discovery: agent card, products, avails  (10 pass, 0 fail)
