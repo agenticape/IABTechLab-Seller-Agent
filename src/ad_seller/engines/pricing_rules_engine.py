@@ -192,6 +192,69 @@ class PricingRulesEngine:
             applied_rules=applied_rules,
         )
 
+    def apply_target_price(
+        self,
+        decision: PricingDecision,
+        target_price: float,
+        buyer_context: Optional[BuyerContext] = None,
+        floor_price: Optional[float] = None,
+    ) -> PricingDecision:
+        """Honour a buyer's target price only where the buyer's tier allows it.
+
+        - At or above the waterfall price (``decision.final_price``) the
+          target is the buyer's own price and is honoured for any tier.
+        - Below it, only negotiation-enabled tiers may land the target, and
+          only down to ``waterfall x (1 - max negotiation discount)`` (the
+          matching rules' ``max_negotiation_discount``, else 10%, the same
+          default ``is_price_acceptable`` uses).
+        - Never below ``max(floor_price, global_floor_cpm)``.
+
+        The returned decision's rationale states the price actually quoted.
+        """
+        tier = buyer_context.effective_tier if buyer_context else AccessTier.PUBLIC
+        tier_config = self._config.get_tier_config(tier)
+        hard_floor = max(floor_price or 0.0, self._config.global_floor_cpm)
+        waterfall = decision.final_price
+
+        if target_price >= waterfall:
+            accepted = True
+        elif tier_config.negotiation_enabled:
+            rules = self._config.find_matching_rules(
+                tier=tier,
+                agency_id=buyer_context.identity.agency_id if buyer_context else None,
+                advertiser_id=buyer_context.identity.advertiser_id if buyer_context else None,
+            )
+            max_negotiation = max(
+                (r.max_negotiation_discount for r in rules if r.negotiation_enabled),
+                default=0.10,
+            )
+            accepted = target_price >= max(hard_floor, waterfall * (1 - max_negotiation))
+        else:
+            accepted = False
+
+        final = round(target_price, 2) if accepted else waterfall
+        if self._config.global_ceiling_cpm and final > self._config.global_ceiling_cpm:
+            final = self._config.global_ceiling_cpm
+        final = max(final, hard_floor)
+
+        parts = [
+            p
+            for p in decision.rationale.split(" | ")
+            if not p.startswith("Final price:") and not p.startswith("(Total savings")
+        ]
+        if accepted:
+            parts.append(f"Buyer target ${target_price:.2f} CPM accepted")
+        else:
+            parts.append(f"Buyer target ${target_price:.2f} CPM not available at this tier")
+        parts.append(f"Final price: ${final:.2f} CPM")
+        applied = [
+            *decision.applied_rules,
+            f"Target price {'accepted' if accepted else 'declined'}: ${target_price:.2f}",
+        ]
+        return decision.model_copy(
+            update={"final_price": final, "rationale": " | ".join(parts), "applied_rules": applied}
+        )
+
     def _calculate_volume_discount(
         self,
         volume: int,
