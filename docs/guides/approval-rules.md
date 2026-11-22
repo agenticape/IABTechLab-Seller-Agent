@@ -198,6 +198,11 @@ Currently supported:
 |-----------|------|---------------|
 | `proposal_decision` | ProposalHandlingFlow | After crew evaluates a buyer proposal and recommends accept/counter/reject |
 
+For `POST /proposals`, the threshold compares the proposal's gross value at
+the higher of the requested price and the list (rate card or catalog base)
+price, so a low offer the seller counters toward list is still held when
+the deal it is heading for is large.
+
 Example:
 
 ```bash

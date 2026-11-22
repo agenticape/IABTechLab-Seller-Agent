@@ -410,9 +410,6 @@ class ProposalHandlingFlow(Flow[ProposalState]):
             if not product:
                 return
 
-            # Check against floor
-            price_acceptable = requested_price >= product.floor_cpm
-
             # Get audience validation results (from validate_audience step)
             audience_validation = getattr(self, "_audience_validation", {})
 
@@ -436,6 +433,12 @@ class ProposalHandlingFlow(Flow[ProposalState]):
             # before. Floor stays the product's own floor_cpm regardless.
             recommended_price = await rate_card_service.resolve_base_cpm(product)
 
+            # Acceptable only at or above the verified buyer's tier price
+            # (the same waterfall the quote path applies), with the product
+            # floor as a hard minimum. Below it, the offer is countered.
+            tier_price = self._tier_price(product, recommended_price, requested_impressions)
+            price_acceptable = requested_price >= tier_price
+
             # Initialize evaluation with audience fields
             self.state.evaluation = ProposalEvaluation(
                 proposal_id=self.state.proposal_id,
@@ -444,6 +447,7 @@ class ProposalHandlingFlow(Flow[ProposalState]):
                 requested_price=requested_price,
                 minimum_acceptable_price=product.floor_cpm,
                 recommended_price=recommended_price,
+                tier_price=tier_price,
                 price_acceptable=price_acceptable,
                 requested_impressions=requested_impressions,
                 available_impressions=available_impressions,
@@ -462,6 +466,28 @@ class ProposalHandlingFlow(Flow[ProposalState]):
             )
         except Exception as e:  # noqa: BLE001 — fail causefully, never silently
             self._fail_stage("evaluate_pricing", "pricing", f"Pricing evaluation error: {e}")
+
+    def _tier_price(self, product: Any, base_price: float, impressions: int) -> float:
+        """The verified buyer's waterfall price for this proposal, never below the floor."""
+        from ..engines.pricing_rules_engine import PricingRulesEngine
+        from ..models.core import DealType
+        from ..models.pricing_tiers import TieredPricingConfig
+        from ..services.deal_service import _normalize_deal_type_code, _quote_deal_type_map
+
+        code = _normalize_deal_type_code(str(self.state.proposal_data.get("deal_type") or ""))
+        deal_type = _quote_deal_type_map().get(code or "PD", DealType.PREFERRED_DEAL)
+        decision = PricingRulesEngine(
+            TieredPricingConfig(seller_organization_id="default")
+        ).calculate_price(
+            product_id=product.product_id,
+            base_price=base_price,
+            buyer_context=self.state.buyer_context,
+            deal_type=deal_type,
+            volume=impressions or 0,
+            inventory_type=product.inventory_type,
+            floor_price=product.floor_cpm,
+        )
+        return max(decision.final_price, product.floor_cpm)
 
     @listen(evaluate_pricing)
     async def check_availability(self) -> None:
@@ -768,8 +794,9 @@ class ProposalHandlingFlow(Flow[ProposalState]):
                 self.state.evaluation.recommendation = "counter"
 
         if self.state.recommendation == "accept" and self.state.evaluation:
-            # Deterministic availability truth gates the crew's opinion:
-            # the seller cannot ACCEPT volume it cannot deliver.
+            # Deterministic availability and pricing truth gate the crew's
+            # opinion: the seller cannot ACCEPT volume it cannot deliver, or
+            # a price below the buyer's tier price.
             if self._volume_counter_applies():
                 self.state.recommendation = "counter"
                 self.state.evaluation.recommendation = "counter"
@@ -778,6 +805,9 @@ class ProposalHandlingFlow(Flow[ProposalState]):
                 # deliverable to counter with — terminal reject.
                 self.state.recommendation = "reject"
                 self.state.evaluation.recommendation = "reject"
+            elif not self.state.evaluation.price_acceptable:
+                self.state.recommendation = "counter"
+                self.state.evaluation.recommendation = "counter"
 
         if self.state.recommendation != "counter":
             return
@@ -923,12 +953,14 @@ class ProposalHandlingFlow(Flow[ProposalState]):
     def _deal_value(self) -> float:
         """Gross deal value of the current proposal (CPM x impressions / 1000).
 
-        Used by the mandatory threshold gate. Falls back to the raw
-        proposal_data when the evaluation has not been populated.
+        Used by the mandatory threshold gate. Priced at the higher of the
+        requested and list (recommended) price, so a low offer the seller
+        counters toward list cannot slip under the threshold. Falls back to
+        the raw proposal_data when the evaluation has not been populated.
         """
         ev = self.state.evaluation
         if ev is not None:
-            price = ev.requested_price or 0
+            price = max(ev.requested_price or 0, ev.recommended_price or 0)
             impressions = ev.requested_impressions or 0
         else:
             price = self.state.proposal_data.get("price", 0) or 0

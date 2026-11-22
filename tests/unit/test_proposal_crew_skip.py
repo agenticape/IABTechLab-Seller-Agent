@@ -76,7 +76,7 @@ def _make_buyer_context(buyer_tier="agency", agency_id="agency-1"):
     return _build_buyer_context(buyer_tier=buyer_tier, agency_id=agency_id)
 
 
-def _proposal_data(price=25.0, product_id="ctv-premium-sports"):
+def _proposal_data(price=35.0, product_id="ctv-premium-sports"):
     return {
         "product_id": product_id,
         "deal_type": "preferred_deal",
@@ -201,12 +201,12 @@ class TestSkipDoomedCrew:
         evaluation answers, and one INFO line states why."""
         factory = MagicMock()
         with caplog.at_level(logging.INFO, logger="ad_seller.flows.proposal_handling_flow"):
-            # Price above floor -> deterministic path accepts.
+            # Price at the tier price -> deterministic path accepts.
             result = await _run_flow(
                 budget=20.0,
                 min_budget=120.0,
                 factory=factory,
-                proposal_data=_proposal_data(price=25.0),
+                proposal_data=_proposal_data(price=35.0),
                 products={"ctv-premium-sports": _make_product(floor_cpm=20.0)},
             )
 
@@ -256,7 +256,7 @@ class TestCrewStillRunsWhenUsable:
             budget=0,
             min_budget=120.0,
             factory=factory,
-            proposal_data=_proposal_data(price=25.0),
+            proposal_data=_proposal_data(price=35.0),
             products={"ctv-premium-sports": _make_product(floor_cpm=20.0)},
         )
 
