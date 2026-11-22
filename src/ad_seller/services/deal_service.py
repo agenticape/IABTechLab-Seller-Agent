@@ -648,6 +648,7 @@ async def create_deal_from_template(
         deal_type=deal_type_enum,
         volume=request.impressions or 0,
         inventory_type=product.inventory_type,
+        floor_price=product.floor_cpm,
     )
 
     final_cpm = decision.final_price

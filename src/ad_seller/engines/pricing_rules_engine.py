@@ -62,6 +62,7 @@ class PricingRulesEngine:
         deal_type: DealType = DealType.PREFERRED_DEAL,
         volume: int = 0,
         inventory_type: Optional[str] = None,
+        floor_price: Optional[float] = None,
     ) -> PricingDecision:
         """Calculate the final price for a buyer.
 
@@ -72,6 +73,9 @@ class PricingRulesEngine:
             deal_type: Type of deal being created
             volume: Number of impressions
             inventory_type: Type of inventory
+            floor_price: The product's own floor CPM. Stacked tier, rule and
+                volume discounts never take the final price below
+                ``max(floor_price, global_floor_cpm)``.
 
         Returns:
             PricingDecision with final price and rationale
@@ -142,9 +146,18 @@ class PricingRulesEngine:
                 price = price * (1 - volume_discount)
                 applied_rules.append(f"Volume discount: -{volume_discount * 100:.1f}%")
 
-        # Enforce floor price
-        if price < self._config.global_floor_cpm:
+        # Enforce the floor: the product's own floor when it has one, never
+        # below the global floor. Discounts stack multiplicatively, so a high
+        # tier plus a large volume commitment can otherwise undercut it.
+        floor_capped = False
+        if floor_price is not None and floor_price > self._config.global_floor_cpm:
+            if price < floor_price:
+                price = floor_price
+                floor_capped = True
+                applied_rules.append(f"Product floor enforced: ${floor_price}")
+        elif price < self._config.global_floor_cpm:
             price = self._config.global_floor_cpm
+            floor_capped = True
             applied_rules.append(f"Floor enforced: ${self._config.global_floor_cpm}")
 
         # Enforce ceiling if set
@@ -161,6 +174,7 @@ class PricingRulesEngine:
             rule_discount=rule_discount,
             volume_discount=volume_discount,
             buyer_context=buyer_context,
+            floor_capped=floor_capped,
         )
 
         return PricingDecision(
@@ -224,6 +238,7 @@ class PricingRulesEngine:
         rule_discount: float,
         volume_discount: float,
         buyer_context: Optional[BuyerContext],
+        floor_capped: bool = False,
     ) -> str:
         """Build human-readable pricing rationale.
 
@@ -235,6 +250,9 @@ class PricingRulesEngine:
             rule_discount: Applied rule discount
             volume_discount: Applied volume discount
             buyer_context: Buyer identity context
+            floor_capped: Whether the floor clamp raised the price. The
+                rationale is buyer-facing, so it says the discounts were
+                capped without naming the floor or its value.
 
         Returns:
             Human-readable rationale string
@@ -249,6 +267,9 @@ class PricingRulesEngine:
 
         if volume_discount > 0:
             parts.append(f"Volume discount: -{volume_discount * 100:.1f}%")
+
+        if floor_capped:
+            parts.append("Discounts capped by seller pricing policy")
 
         total_discount = 1 - (final_price / base_price) if base_price > 0 else 0
         parts.append(f"Final price: ${final_price:.2f} CPM")

@@ -61,6 +61,7 @@ async def get_pricing(
         base_price=await rate_card_service.resolve_base_cpm(product),
         buyer_context=buyer_context,
         volume=volume,
+        floor_price=product.floor_cpm,
     )
 
     return {
@@ -173,6 +174,7 @@ async def create_quote(
         deal_type=deal_type_enum,
         volume=request.impressions or 0,
         inventory_type=product.inventory_type,
+        floor_price=product.floor_cpm,
     )
 
     # Evaluate target_cpm if provided
