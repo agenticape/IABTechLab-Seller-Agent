@@ -208,6 +208,11 @@ booking: an approval for the same price and impressions books the deal, a
 rejection is a 409 `booking_rejected`, and an approval for different terms
 raises a new request.
 
+For `POST /proposals`, the threshold compares the proposal's gross value at
+the higher of the requested price and the list (rate card or catalog base)
+price, so a low offer the seller counters toward list is still held when
+the deal it is heading for is large.
+
 Example:
 
 ```bash
