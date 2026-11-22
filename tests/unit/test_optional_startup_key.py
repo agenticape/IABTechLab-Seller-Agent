@@ -159,7 +159,7 @@ def _make_product(product_id="ctv-premium-sports", base_cpm=35.0, floor_cpm=20.0
     )
 
 
-def _proposal_data(price=25.0, product_id="ctv-premium-sports"):
+def _proposal_data(price=35.0, product_id="ctv-premium-sports"):
     return {
         "product_id": product_id,
         "deal_type": "preferred_deal",
@@ -215,7 +215,7 @@ class TestKeylessDeterministicProposalPath:
             )
 
     async def test_above_floor_proposal_accepted_keyless(self):
-        result = await self._run_keyless_flow(price=25.0)
+        result = await self._run_keyless_flow(price=35.0)
         assert result["recommendation"] == "accept"
         assert result["status"] == "accepted"
         # The failure was surfaced (not swallowed silently) with the

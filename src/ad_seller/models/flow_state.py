@@ -82,6 +82,7 @@ class ProposalEvaluation(BaseModel):
     requested_price: float
     minimum_acceptable_price: float
     recommended_price: float
+    tier_price: Optional[float] = None  # buyer's waterfall price (floor-clamped)
     price_acceptable: bool = False
 
     # Availability analysis
