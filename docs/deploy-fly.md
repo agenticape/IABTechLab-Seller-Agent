@@ -31,12 +31,12 @@ What's on the volume (`/data`), and so survives deploys and restarts:
 | `/data/audit_fallback.jsonl` | Audit events the event bus couldn't persist (normally absent). |
 
 !!! warning "Fully public"
-    Anyone on the internet can call the anonymous endpoints (catalog, public
-    pricing, avails, agent card, and the routes listed in upstream issue
-    [#86](https://github.com/IABTechLab/seller-agent/issues/86) that accept
-    unauthenticated writes). That's acceptable here because every byte of data
-    is fictional, but don't put anything real on this deployment. Seller
-    security behaviour is deliberately unchanged in this setup.
+    Anyone on the internet can call the anonymous read endpoints (catalog,
+    public pricing, avails, discovery, agent card). Quotes, proposals,
+    negotiation, sessions, orders and deal booking need a buyer API key, and
+    curated/bulk/migrate/deprecate need the operator key; don't set
+    `ALLOW_ANONYMOUS_BUYER_WRITES=true` here. Every byte of data is fictional,
+    but don't put anything real on this deployment.
 
 ## Prerequisites
 
@@ -222,9 +222,10 @@ This needs the local sandbox installed once (`.\sandbox\setup.ps1`, see
   --expect-agent-url https://iab-seller.agenticape.ai
 ```
 
-Expect scenarios 1-5 to PASS, with the same two WARNs as locally (product
-floor undercut by stacked discounts, and PG `at=1`, upstream issue #147). Each
-run adds a few fictional quotes, deals and approvals to the hosted DB.
+Expect scenarios 1-5 to PASS with no WARNs, as locally. Each run adds a few
+fictional quotes, deals and approvals to the hosted DB. Keys minted before the
+advertiser identity gained seat ids and domains are re-minted on the next
+boot, so copy `/data/keys.json` again after deploying this change.
 
 ## 7. Custom domain: `iab-seller.agenticape.ai`
 

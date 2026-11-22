@@ -243,11 +243,11 @@ to learn the wire format.
 
 | # | Scenario | What it checks |
 |---|---|---|
-| 1 | Discovery | `/health`, `/.well-known/agent.json`, `GET /products` (exactly the 15 fictional `inv-*` products), `GET /products/{id}`, 404 on unknown ids, `POST /products/avails`, no floor or reserve fields on the catalog. |
-| 2 | Tiered pricing | `POST /pricing` as public, seat, agency and advertiser keys: discounts of 0, 5, 10 and 15%, strictly better per tier, never below the floor, and no floor field or "floor" wording in responses. Also checks that an anonymous body claiming advertiser tier gets public price, a bad key gets 401, and a large volume order is probed (see the WARN below). |
-| 3 | Quote then book | Advertiser quotes PD, and replaying the `idempotency_key` returns the same quote, while the same key with a different body gets 409. Anonymous booking gets 401 and another buyer's booking gets 403. Booking returns the **Deal ID**, OpenRTB `id`, `bidfloor` and `at`, plus the TTD, DV360 and Xandr activation text. A booking replay returns the same Deal ID, a new key on a booked quote is refused, and the deal reads back. Then the same flow on a PG deal (WARN #147). |
-| 4 | Negotiation | Agency quotes, then makes counters via `POST /api/v1/negotiations/messages` (below floor, then into the band between floor and quote) until the seller accepts. It sends an explicit `accept` and books the quote. The deal's `final_cpm` and OpenRTB `bidfloor` must equal the agreed CPM. Each round's seller price must be at or above the floor and never named as such, and a round replay must not use up a round. |
-| 5 | Approval gate | A $5k proposal is decided automatically, while a $500k one comes back `pending_approval`. `/approvals` gives 401 to anonymous callers and 403 to buyers, and a buyer can't approve itself. The operator approves, then `/resume` returns `accepted`. A second $360k proposal is rejected by the operator and resumes as `rejected`. |
+| 1 | Discovery | `/health`, `/.well-known/agent.json`, `GET /products` (exactly the 15 fictional `inv-*` products), `GET /products/{id}`, 404 on unknown ids, `POST /products/avails`, no floor or reserve fields on the catalog. `POST /discovery` with a tier claimed in the body but no key is answered at the public tier; with the agency key, at the agency tier. Media-kit search exposes no floor fields. |
+| 2 | Tiered pricing | `POST /pricing` as public, seat, agency and advertiser keys: discounts of 0, 5, 10 and 15%, strictly better per tier, never below the floor, and no floor field or "floor" wording in responses. Also checks that an anonymous body claiming advertiser tier gets public price, a bad key gets 401, and a 50M-impression advertiser order stays at or above the product floor. |
+| 3 | Quote then book | An anonymous quote gets 401. Advertiser quotes PD, and replaying the `idempotency_key` returns the same quote, while the same key with a different body gets 409. A seat `target_cpm` at the floor is not honoured (the quote stays at the seat price, and the rationale names that price), while an agency target inside its negotiation band is. Anonymous booking gets 401 and another buyer's booking gets 403. Booking returns the **Deal ID**, OpenRTB `id`, `bidfloor`, `at=3` (fixed price) and `wseat`/`wadomain` from the advertiser key's seat ids and domains, plus the TTD, DV360 and Xandr activation text. A booking replay returns the same Deal ID, a new key on a booked quote is refused, and the deal reads back. Then the same flow on a PG deal, which must also carry `at=3`. |
+| 4 | Negotiation | Agency quotes, then makes counters via `POST /api/v1/negotiations/messages` (below floor, then into the band between floor and quote) until the seller accepts. It sends an explicit `accept` and books the quote. The deal's `final_cpm` and OpenRTB `bidfloor` must equal the agreed CPM. Each round's seller price must be at or above the floor and never named as such, a below-floor offer must be countered strictly above the floor, and a round replay must not use up a round. |
+| 5 | Approval gate | A $5k proposal is decided automatically, while a $500k one comes back `pending_approval`. `/approvals` gives 401 to anonymous callers and 403 to buyers, and a buyer can't approve itself. The operator approves, then `/resume` returns `accepted`. An agency proposal between the floor and its tier price is countered. Legacy `POST /deals` gives 401 without a key, 404 for an unknown proposal and 409 to another buyer, and for the advertiser's approved proposal returns a PG deal at the proposal's $50 with its 10M guaranteed impressions. A second $360k proposal is rejected by the operator, resumes as `rejected`, and `POST /deals` refuses it with 409. Finally, booking a $354k quote returns 202 `pending_approval`; once the operator approves, the re-submitted booking books. |
 | 6 | IAB buyer-agent (optional) | With `--buyer-agent PATH`, runs `sandbox/buyer_agent_probe.py` inside your local [buyer-agent](https://github.com/IABTechLab/buyer-agent) clone's own environment (`uv run --project`). The probe uses the buyer's `DealsClient` to fetch the agent card, discover products, quote and book against this seller only. |
 
 ### Scenario 6 setup
@@ -282,51 +282,62 @@ Then `./sandbox/scenarios.sh --buyer-agent <fresh buyer-agent clone>` ran.
 [PASS] 6. IAB buyer-agent (local clone) against this seller  (5 pass, 0 fail)
 ```
 
-The two WARNs:
+That run's two WARNs (product-floor undercut on large volume orders, and PG
+deals with OpenRTB `at=1`) are fixed on this fork, along with the other
+issues written up in `docs/upstream-issues.md`. A later run of scenarios 1-5
+on a Linux VM (scenario 6 not run) gave:
 
-- **Scenario 2**: an advertiser key with a 50M-impression volume discount is
-  priced at $30.60 on a $45 product whose floor is $38.25. `PricingRulesEngine`
-  only clamps to the global `DEFAULT_PRICE_FLOOR_CPM` ($10), not the product
-  floor, so stacked tier and volume discounts undercut it. No upstream issue
-  found for this yet.
-- **Scenario 3**: a PG deal comes back with OpenRTB `at=1`
-  ([#147](https://github.com/IABTechLab/seller-agent/issues/147)).
+```text
+[PASS] 1. Discovery: agent card, products, avails  (15 pass, 0 fail)
+[PASS] 2. Tiered pricing public/seat/agency/advertiser + floor protection  (20 pass, 0 fail)
+[PASS] 3. Quote then book with idempotency (Deal ID + OpenRTB params)  (23 pass, 0 fail)
+[PASS] 4. Multi-round negotiation, then book at the agreed CPM  (20 pass, 0 fail)
+[PASS] 5. High-value proposal held by the approval gate  (26 pass, 0 fail)
+```
 
-INFO-level observations from the same run:
+INFO-level observations:
 
-- A below-floor counter is answered **at** the floor. This is by design (see
-  step 3.5 in `engines/negotiation_engine.py`), and the wording never says
-  "floor", but a buyer that lowballs learns the floor after one round.
+- A below-floor offer is countered above the floor, at
+  `NEGOTIATION_BELOW_FLOOR_COUNTER_SHARE` of the way back to the seller's last
+  position (default: the tier strategy's own share); `0` restores the old
+  counter at the floor.
 - Seat-tier keys can negotiate too; the endpoint doesn't apply
   `BuyerContext.eligible_for_negotiation`.
+- PG soft holds apply only to products with a declared `maximum_impressions`.
+  The CSV catalog declares none, so they're covered by unit tests rather than
+  a scenario.
+- If you re-mint keys after pulling this change (`sandbox/mint_keys.py` does
+  it automatically when the fictional identities change), the advertiser key
+  carries `seat_ids` and `advertiser_domains` for the `wseat`/`wadomain` check.
 
 ---
 
 ## Known upstream issues relevant to sell-side testing
 
 Checked against [IABTechLab/seller-agent](https://github.com/IABTechLab/seller-agent/issues)
-on 2026-11-21. All were open at that time.
+on 2026-11-21. All were open at that time. This fork fixes #86, #128, #129
+and #147 (see `docs/upstream-issues.md`).
 
 | Issue | Title | How it shows up in the sandbox |
 |---|---|---|
-| [#86](https://github.com/IABTechLab/seller-agent/issues/86) | fix: six mutating routes accept unauthenticated callers | `POST /deals`, `/agentic-audience/match`, `/api/v1/deals/curated`, `/api/v1/deals/{id}/deprecate`, `/sessions/{id}/messages` and `/sessions/{id}/close` work with no key. Try them with no `X-Api-Key`. |
+| [#86](https://github.com/IABTechLab/seller-agent/issues/86) | fix: six mutating routes accept unauthenticated callers Fixed here: those routes now need an operator key (curated, deprecate, migrate, bulk) or the owning buyer key (sessions), `POST /deals` needs a key, and `/agentic-audience/match` stays public as a stateless score. |
 | [#126](https://github.com/IABTechLab/seller-agent/issues/126) | Buyer-controlled proposal text can produce an `accept` decision inconsistent with the structured bid price | LLM path only. It doesn't show up in the default (no-key) sandbox; it can once you add `ANTHROPIC_API_KEY` and raise the proposal time budget. |
-| [#129](https://github.com/IABTechLab/seller-agent/issues/129) | Accepting a proposal-led negotiation and booking its quote doesn't check the proposal's approval decision | Scenario 5 territory. A pending or rejected high-value proposal can still reach a booked deal through negotiation and quote booking. |
+| [#129](https://github.com/IABTechLab/seller-agent/issues/129) | Accepting a proposal-led negotiation and booking its quote doesn't check the proposal's approval decision Fixed here: quote booking applies the approval gate (scenario 5 checks the 202 and the approved re-submit). |
 | [#130](https://github.com/IABTechLab/seller-agent/issues/130) | A second authenticated buyer can accept another buyer's proposal-led negotiation and apply its price to their own quote | Needs two buyers at the same tier. Mint a second agency key (see "Using the keys by hand"). |
 | [#131](https://github.com/IABTechLab/seller-agent/issues/131) | `POST /proposals` has no idempotency key, so a retry after a client timeout creates a second proposal and approval request | Re-sending a scenario 5 body creates a second pending approval. |
 | [#142](https://github.com/IABTechLab/seller-agent/issues/142) | A product's supported_deal_types is never enforced: proposals, quotes and template bookings accept deal types the product doesn't offer | e.g. quote `deal_type: "PG"` on `inv-dsp-gnn-richmedia`, whose types are PD/PA; it's accepted. |
 | [#146](https://github.com/IABTechLab/seller-agent/issues/146) | A CSV catalog priced in AUD is listed and quoted as USD, and `DEFAULT_CURRENCY` does not change the label | aws_workshop is all USD, so it doesn't trigger here. Point `CSV_DATA_DIR` at a copy with `currency=AUD` under `data/csv/samples/` to reproduce. |
-| [#147](https://github.com/IABTechLab/seller-agent/issues/147) | Quote-backed PG deal returns at=1 despite fixed, guaranteed terms | Scenario 3 WARN. |
+| [#147](https://github.com/IABTechLab/seller-agent/issues/147) | Quote-backed PG deal returns at=1 despite fixed, guaranteed terms Fixed here: PG/PD `at=3`, PA `at=1` (scenario 3). |
 
 Also worth knowing:
 
 - [#118](https://github.com/IABTechLab/seller-agent/issues/118): `POST /proposals` silently falls back to the
   deterministic evaluation after a crew failure or timeout. In the sandbox the
   fallback is always used, and nothing in the response says so.
-- [#128](https://github.com/IABTechLab/seller-agent/issues/128): legacy `POST /deals` returns fixed demo terms ($15
-  display) for any `proposal_id` and tries to register with `OPENDIRECT_BASE_URL`,
-  which is localhost here. Use `POST /api/v1/quotes` + `POST /api/v1/deals`
-  instead.
+- [#128](https://github.com/IABTechLab/seller-agent/issues/128): legacy `POST /deals` returned fixed demo terms ($15
+  display) for any `proposal_id`. Fixed here: it needs a key and the caller's
+  own accepted proposal, and uses the proposal's terms. It still tries to
+  register with `OPENDIRECT_BASE_URL`, which is localhost here.
 - [#82](https://github.com/IABTechLab/seller-agent/issues/82): the unit suite can leave `./ad_seller.db` behind,
   which makes a second local run fail. Delete it between runs (it's not the
   sandbox DB).

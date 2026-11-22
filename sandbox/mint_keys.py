@@ -18,6 +18,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import sandbox_env
 
@@ -26,7 +27,7 @@ LABEL_PREFIX = "sandbox-"
 # Fictional buyer identities, one per pricing tier. The tier is derived from
 # which ids are present (see BuyerIdentity.access_tier): seat_id -> seat,
 # agency_id -> agency, agency_id + advertiser_id -> advertiser.
-BUYERS: dict[str, dict[str, str]] = {
+BUYERS: dict[str, dict[str, Any]] = {
     "seat": {
         "seat_id": "seat-sandbox-dsp-001",
         "seat_name": "Sandbox DSP Seat (fictional)",
@@ -41,6 +42,9 @@ BUYERS: dict[str, dict[str, str]] = {
         "agency_name": "Sandbox Media Agency (fictional)",
         "advertiser_id": "adv-sandbox-001",
         "advertiser_name": "Sandbox Outdoor Co (fictional)",
+        # OpenRTB allow-lists stamped on this buyer's deals (wseat / wadomain)
+        "seat_ids": ["seat-sandbox-dsp-001"],
+        "advertiser_domains": ["sandbox-outdoor.example"],
     },
 }
 
@@ -49,6 +53,8 @@ async def _existing_keys_valid(service, data: dict) -> bool:
     keys = [data.get("operator", {}).get("api_key")]
     keys += [b.get("api_key") for b in data.get("buyers", {}).values()]
     if not all(keys) or set(data.get("buyers", {})) != set(BUYERS):
+        return False
+    if any(data["buyers"][tier].get("identity") != ident for tier, ident in BUYERS.items()):
         return False
     for key in keys:
         try:
