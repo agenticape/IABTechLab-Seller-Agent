@@ -1,0 +1,65 @@
+# Fly.io config for the PUBLIC mock-only seller sandbox at
+# https://iab-seller.agenticape.ai. Step-by-step guide: docs/deploy-fly.md
+#
+# Mock data only: sandbox/.env.fly pins AD_SERVER_TYPE=csv (fictional
+# aws_workshop catalog), blank SSP / deal-sync connectors, no GAM/FreeWheel,
+# local-only OpenDirect and registry URLs, and SQLite on the /data volume.
+# Those pinned values can't be overridden from [env] below or by Fly secrets.
+#
+# App name: change `app` here, or pass `--app <name>` / `-a <name>` to fly
+# commands. Fly app names are global, so pick another if this one is taken.
+
+app = "iab-seller-agenticape"
+primary_region = "syd"
+# uvicorn shuts down gracefully on SIGINT; fly_server.py then hard-exits so
+# CrewAI's atexit handlers can't stall a stop or deploy.
+kill_signal = "SIGINT"
+kill_timeout = "10s"
+
+[build]
+  dockerfile = "infra/fly/Dockerfile"
+
+[env]
+  # Advertised as `url` in /.well-known/agent.json. Must be https.
+  SELLER_AGENT_URL = "https://iab-seller.agenticape.ai"
+  PORT = "8080"
+  DATA_DIR = "/data"
+
+# One volume, one machine. The SQLite DB and keys.json live here and survive
+# deploys and restarts. SQLite must not be shared, so keep exactly ONE machine
+# (deploy with --ha=false; see docs/deploy-fly.md).
+[[mounts]]
+  source = "seller_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Scale to zero when idle; the next request starts the machine again
+  # (cold start of a few seconds; the server itself is up in ~2s). Set
+  # min_machines_running = 1 to keep it always on (roughly US$4/month at
+  # 512 MB instead of cents). See docs/deploy-fly.md for the cost table.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 25
+    hard_limit = 50
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+
+# Measured locally: ~70 MiB idle, ~200 MiB peak across all sandbox scenarios
+# (a full CrewAI + chromadb import is ~180 MiB). 512 MB leaves headroom for
+# the deterministic paths; use `fly scale memory 1024` if you enable the LLM
+# crews and see OOM kills in `fly logs`.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

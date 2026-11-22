@@ -108,6 +108,10 @@ Dockerfile
 .dockerignore
 .packaged-agentcore.yaml
 .bedrock_agentcore
+# ...but the hosted Fly.io sandbox build files are hand-written and committed
+# (docs/deploy-fly.md).
+!/.dockerignore
+!/infra/fly/Dockerfile
 
 # SQLite database files
 *.db-journal

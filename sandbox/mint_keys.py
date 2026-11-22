@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 import sandbox_env
 
@@ -58,7 +59,11 @@ async def _existing_keys_valid(service, data: dict) -> bool:
     return True
 
 
-async def _mint(force: bool) -> tuple[dict, bool]:
+async def _mint(
+    force: bool,
+    keys_file: Path = sandbox_env.KEYS_FILE,
+    base_url: str = sandbox_env.BASE_URL,
+) -> tuple[dict, bool]:
     from ad_seller.auth.api_key_service import ApiKeyService
     from ad_seller.models.api_key import ApiKeyCreateRequest, OperatorApiKeyCreateRequest
     from ad_seller.storage.factory import close_storage, get_storage
@@ -67,8 +72,8 @@ async def _mint(force: bool) -> tuple[dict, bool]:
         storage = await get_storage()
         service = ApiKeyService(storage)
 
-        if not force and sandbox_env.KEYS_FILE.exists():
-            data = json.loads(sandbox_env.KEYS_FILE.read_text(encoding="utf-8"))
+        if not force and keys_file.exists():
+            data = json.loads(keys_file.read_text(encoding="utf-8"))
             if await _existing_keys_valid(service, data):
                 return data, False
 
@@ -82,7 +87,7 @@ async def _mint(force: bool) -> tuple[dict, bool]:
             OperatorApiKeyCreateRequest(label=f"{LABEL_PREFIX}operator")
         )
         data = {
-            "base_url": sandbox_env.BASE_URL,
+            "base_url": base_url,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "operator": {"key_id": op.key_id, "api_key": op.api_key},
             "buyers": {},

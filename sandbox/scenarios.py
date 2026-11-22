@@ -108,6 +108,8 @@ class Ctx:
     client: httpx.Client
     keys: dict[str, Any]
     verbose: bool
+    base_url: str = sandbox_env.BASE_URL
+    expect_agent_url: Optional[str] = None
     products: dict[str, dict] = field(default_factory=dict)
 
     def key(self, who: str) -> Optional[str]:
@@ -204,11 +206,18 @@ def scenario_1_discovery(ctx: Ctx, sc: Scenario) -> None:
         card = r.json()
         skills = [s.get("id") for s in card.get("skills", [])]
         sc.info(f"agent '{card.get('name')}' at {card.get('url')} skills={skills}")
-        sc.check(
-            "localhost" in (card.get("url") or "") or "127.0.0.1" in (card.get("url") or ""),
-            "agent card advertises a localhost URL",
-            card.get("url", ""),
-        )
+        if ctx.expect_agent_url:
+            sc.check(
+                (card.get("url") or "").rstrip("/") == ctx.expect_agent_url.rstrip("/"),
+                f"agent card advertises {ctx.expect_agent_url}",
+                card.get("url", ""),
+            )
+        else:
+            sc.check(
+                "localhost" in (card.get("url") or "") or "127.0.0.1" in (card.get("url") or ""),
+                "agent card advertises a localhost URL",
+                card.get("url", ""),
+            )
 
     r = ctx.call("GET", "/products?limit=500")
     if not sc.check(r.status_code == 200, "GET /products lists the catalog", r.text):
@@ -714,12 +723,12 @@ def scenario_6_buyer_agent(ctx: Ctx, sc: Scenario, buyer_agent: Optional[str]) -
     probe = sandbox_env.SANDBOX_DIR / "buyer_agent_probe.py"
     env = {
         **os.environ,
-        "SANDBOX_SELLER_URL": sandbox_env.BASE_URL,
+        "SANDBOX_SELLER_URL": ctx.base_url,
         "SANDBOX_BUYER_API_KEY": ctx.key("agency"),
         "SANDBOX_RUN_ID": RUN_ID,
         # Keep the buyer pinned to this seller and off every hosted default.
-        "SELLER_ENDPOINTS": sandbox_env.BASE_URL,
-        "IAB_SERVER_URL": sandbox_env.BASE_URL,
+        "SELLER_ENDPOINTS": ctx.base_url,
+        "IAB_SERVER_URL": ctx.base_url,
         "OPENDIRECT_BASE_URL": "http://localhost:3000",
         "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
         "VIRTUAL_ENV": "",
@@ -776,14 +785,33 @@ def main() -> int:
     parser.add_argument(
         "--verbose", "-v", action="store_true", help="print request/response bodies"
     )
+    parser.add_argument(
+        "--base-url",
+        default=sandbox_env.BASE_URL,
+        help="seller to test, e.g. https://iab-seller.agenticape.ai (default: local sandbox)",
+    )
+    parser.add_argument(
+        "--keys",
+        help="keys.json to use (default: sandbox/.local/keys.json); for a hosted "
+        "sandbox, the file copied from its /data/keys.json",
+    )
+    parser.add_argument(
+        "--expect-agent-url",
+        help="URL the agent card must advertise (default: a localhost URL; "
+        "defaults to --base-url when that is not local)",
+    )
     args = parser.parse_args()
+    base_url = args.base_url.rstrip("/")
+    expect_agent_url = args.expect_agent_url
+    if expect_agent_url is None and not sandbox_env._is_local_url(base_url):
+        expect_agent_url = base_url
 
-    if not sandbox_env.KEYS_FILE.exists():
-        print(
-            f"No keys at {sandbox_env.KEYS_FILE}. Run sandbox/setup.ps1 or sandbox/setup.sh first."
-        )
+    keys_file = Path(args.keys) if args.keys else sandbox_env.KEYS_FILE
+    if not keys_file.exists():
+        print(f"No keys at {keys_file}. Run sandbox/setup.ps1 or sandbox/setup.sh first.")
         return 2
-    keys = json.loads(sandbox_env.KEYS_FILE.read_text(encoding="utf-8"))
+    # utf-8-sig: PowerShell 5.1's Out-File/Set-Content -Encoding utf8 writes a BOM.
+    keys = json.loads(keys_file.read_text(encoding="utf-8-sig"))
 
     wanted = sorted(SCENARIOS)
     if args.only:
@@ -791,18 +819,24 @@ def main() -> int:
     if 6 not in wanted and args.buyer_agent:
         wanted.append(6)
 
-    client = httpx.Client(base_url=sandbox_env.BASE_URL, timeout=120.0)
+    client = httpx.Client(base_url=base_url, timeout=120.0)
     try:
         client.get("/health")
     except httpx.HTTPError:
         print(
-            f"Seller is not reachable at {sandbox_env.BASE_URL}. Start it in another terminal:\n"
+            f"Seller is not reachable at {base_url}. Start it in another terminal:\n"
             "  Windows: .\\sandbox\\run.ps1      macOS/Linux: ./sandbox/run.sh"
         )
         return 2
 
-    ctx = Ctx(client=client, keys=keys, verbose=args.verbose)
-    print(f"Sandbox scenarios against {sandbox_env.BASE_URL} (run id {RUN_ID})")
+    ctx = Ctx(
+        client=client,
+        keys=keys,
+        verbose=args.verbose,
+        base_url=base_url,
+        expect_agent_url=expect_agent_url,
+    )
+    print(f"Sandbox scenarios against {base_url} (run id {RUN_ID})")
 
     ran: list[Scenario] = []
     for n in wanted:

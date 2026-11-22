@@ -92,8 +92,13 @@ def _is_local_url(url: str) -> bool:
     return (urlparse(url).hostname or "") in _LOCAL_HOSTS
 
 
-def mock_only_violations() -> list[str]:
-    """Return every reason the effective settings are NOT mock-only."""
+def mock_only_violations(public_seller_url: bool = False) -> list[str]:
+    """Return every reason the effective settings are NOT mock-only.
+
+    ``public_seller_url`` is for the hosted sandbox (``sandbox/fly_server.py``):
+    SELLER_AGENT_URL is then the https URL the agent card advertises instead of
+    localhost. It is only echoed back to buyers, never called by the seller.
+    """
     from ad_seller.config.settings import Settings
 
     s = Settings()
@@ -126,7 +131,13 @@ def mock_only_violations() -> list[str]:
     ):
         if getattr(s, field):
             problems.append(f"{field.upper()} is set ({getattr(s, field)!r}); must be blank")
-    for field in ("opendirect_base_url", "agent_registry_url", "seller_agent_url"):
+    local_only = ["opendirect_base_url", "agent_registry_url"]
+    if public_seller_url:
+        if urlparse(s.seller_agent_url).scheme != "https":
+            problems.append(f"SELLER_AGENT_URL={s.seller_agent_url!r} must be an https:// URL")
+    else:
+        local_only.append("seller_agent_url")
+    for field in local_only:
         if not _is_local_url(getattr(s, field)):
             problems.append(f"{field.upper()}={getattr(s, field)!r} is not localhost")
     if s.storage_type != "sqlite" or not s.database_url.startswith("sqlite:///"):
