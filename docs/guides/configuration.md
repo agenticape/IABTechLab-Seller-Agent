@@ -168,6 +168,7 @@ MANAGER_LLM_MODEL=llama3
 | `MIN_DEAL_VALUE` | `float` | `1000.0` | Minimum deal value |
 | `DEFAULT_PRICE_FLOOR_CPM` | `float` | `10.0` | Global default price floor (CPM) |
 | `NEGOTIATION_BELOW_FLOOR_COUNTER_SHARE` | `float` | unset | Share (0-1) of the gap between the product floor and the seller's last position kept when countering a below-floor offer. Unset uses each strategy's own share; `0` counters exactly at the floor |
+| `PG_QUOTE_INVENTORY_HOLD_ENABLED` | `bool` | `true` | Programmatic Guaranteed quotes soft-hold their impressions against a product's `maximum_impressions` for the quote TTL (booked PG volume stays held until the flight ends); a PG quote that exceeds the remaining capacity is refused with 409 `insufficient_avails`. Uncapped products are not tracked |
 
 ## Yield Optimization
 
