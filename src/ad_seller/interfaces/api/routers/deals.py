@@ -272,7 +272,7 @@ async def book_deal(
         existing = await deal_service.get_deal(prior)
         return cm.internal_deal_to_response(existing)
 
-    result = await deal_service.book_deal(internal_request)
+    result = await deal_service.book_deal(internal_request, buyer_context=context)
     if result.get("status") == "pending_approval":
         # Held by the approval gate: no deal exists yet and nothing is
         # recorded under the idempotency key, so the buyer re-submits the
