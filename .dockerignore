@@ -1,0 +1,18 @@
+# Keep local state, secrets and bulky dirs out of every image build context.
+.git
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+htmlcov
+site
+*.db
+*.db-*
+.env
+.env.local
+.env.*.local
+sandbox/.local
+sandbox/.env.sandbox.local
+data/audit_fallback.jsonl
