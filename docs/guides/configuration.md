@@ -197,6 +197,8 @@ MANAGER_LLM_MODEL=llama3
 | `AGENT_REGISTRY_EXTRA_URLS` | `str` | `""` | Additional registry URLs (comma-separated) |
 | `AUTO_APPROVE_REGISTERED_AGENTS` | `bool` | `true` | Auto-approve agents found in a registry |
 | `REQUIRE_APPROVAL_FOR_UNREGISTERED` | `bool` | `true` | Require operator approval for unknown agents |
+| `AGENT_CARD_FETCH_TIMEOUT_SECONDS` | `float` | `5.0` | Timeout (0-30 s) for fetching a buyer-supplied `agent_url`'s `/.well-known/agent.json` |
+| `AGENT_CARD_FETCH_ALLOW_PRIVATE_NETWORKS` | `bool` | `false` | Off: the agent card fetch requires `https` and a host that resolves only to public addresses (no loopback, private, link-local or metadata addresses), and never follows redirects. On (local development only): also allows `http` and non-public hosts |
 
 ## Approval Configuration
 

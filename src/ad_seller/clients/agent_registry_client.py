@@ -20,11 +20,15 @@ Two AAMP implementations exist (selected by config, not code — see
   for tests/local dev when no real registry is configured.
 """
 
+import asyncio
 import hashlib
+import ipaddress
 import logging
 import os
+import socket
 from abc import ABC, abstractmethod
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import httpx
 from iab_agentic_primitives.registry_client import (
@@ -88,22 +92,83 @@ class BaseRegistryClient(ABC):
 # =============================================================================
 
 
-async def fetch_agent_card(agent_url: str, timeout: float = 15.0) -> Optional[AgentCard]:
+async def _resolve_host(host: str, port: int) -> list[str]:
+    infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    return [info[4][0] for info in infos]
+
+
+async def agent_url_fetch_violation(agent_url: str, allow_private: bool = False) -> Optional[str]:
+    """Why the seller must not fetch ``agent_url``, or None if it may.
+
+    ``agent_url`` arrives in buyer request bodies, so fetching it is a
+    server-side request on the caller's behalf. Only ``https`` URLs whose
+    host resolves exclusively to public addresses are allowed: loopback,
+    private, link-local (cloud metadata), reserved, multicast and
+    unspecified addresses are refused, as are URLs with credentials.
+    ``allow_private`` (local development) also permits ``http`` and
+    non-public addresses. Redirects are never followed by the fetch.
+    The check resolves the host itself, so a DNS answer that changes
+    between check and fetch is not covered.
+    """
+    try:
+        parts = urlsplit(agent_url)
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError:
+        return "malformed URL"
+    allowed_schemes = ("https", "http") if allow_private else ("https",)
+    if parts.scheme not in allowed_schemes:
+        return f"scheme '{parts.scheme}' not allowed"
+    if not parts.hostname:
+        return "no host"
+    if parts.username or parts.password:
+        return "credentials in URL"
+    if allow_private:
+        return None
+    try:
+        addresses = await _resolve_host(parts.hostname, port)
+    except (OSError, UnicodeError) as e:
+        return f"host does not resolve: {e}"
+    if not addresses:
+        return "host does not resolve"
+    for address in addresses:
+        ip = ipaddress.ip_address(address.split("%", 1)[0])
+        if not ip.is_global or ip.is_multicast:
+            return f"host resolves to non-public address {ip}"
+    return None
+
+
+async def fetch_agent_card(agent_url: str, timeout: Optional[float] = None) -> Optional[AgentCard]:
     """Fetch an agent's card from its .well-known endpoint.
 
     This is registry-independent — any A2A-compliant agent can serve
     an agent card at {url}/.well-known/agent.json.
 
+    The URL is checked by :func:`agent_url_fetch_violation` first
+    (``AGENT_CARD_FETCH_ALLOW_PRIVATE_NETWORKS`` relaxes it), redirects are
+    not followed, and the timeout defaults to
+    ``AGENT_CARD_FETCH_TIMEOUT_SECONDS``.
+
     Args:
         agent_url: Base URL of the agent (e.g. https://seller.example.com)
-        timeout: HTTP timeout in seconds
+        timeout: HTTP timeout in seconds (default from settings)
 
     Returns:
         AgentCard if successfully fetched and parsed, None otherwise.
     """
+    from ..config import get_settings
+
+    settings = get_settings()
+    allow_private = bool(getattr(settings, "agent_card_fetch_allow_private_networks", False))
+    if timeout is None:
+        timeout = float(getattr(settings, "agent_card_fetch_timeout_seconds", 5.0))
+    violation = await agent_url_fetch_violation(agent_url, allow_private=allow_private)
+    if violation:
+        logger.warning("Refusing to fetch agent card from %r: %s", agent_url, violation)
+        return None
+
     url = f"{agent_url.rstrip('/')}/.well-known/agent.json"
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             response = await client.get(url)
             if response.status_code == 200:
                 return AgentCard(**response.json())

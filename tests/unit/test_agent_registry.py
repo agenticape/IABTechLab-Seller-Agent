@@ -520,7 +520,13 @@ class TestFetchAgentCard:
         mock_response.status_code = 200
         mock_response.json.return_value = card_data
 
-        with patch("ad_seller.clients.agent_registry_client.httpx.AsyncClient") as mock_cls:
+        with (
+            patch("ad_seller.clients.agent_registry_client.httpx.AsyncClient") as mock_cls,
+            patch(
+                "ad_seller.clients.agent_registry_client._resolve_host",
+                new=AsyncMock(return_value=["93.184.215.14"]),
+            ),
+        ):
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)

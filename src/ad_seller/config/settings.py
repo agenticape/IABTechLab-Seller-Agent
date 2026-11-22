@@ -239,6 +239,12 @@ class Settings(BaseSettings):
     # auto-finalize. 0.0 disables the threshold gate (opt-in behavior only).
     approval_required_above_value: float = 0.0
 
+    # Fetching a buyer-supplied agent_url's /.well-known/agent.json: https
+    # only, public addresses only (no loopback/private/link-local), no
+    # redirects. Allowing private networks also permits http; local dev only.
+    agent_card_fetch_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    agent_card_fetch_allow_private_networks: bool = False
+
     # Session Configuration
     session_ttl_seconds: int = 604800  # 7 days
     session_max_messages: int = 200
