@@ -253,6 +253,12 @@ class Settings(BaseSettings):
     # are not tracked.
     pg_quote_inventory_hold_enabled: bool = True
 
+    # Fetching a buyer-supplied agent_url's /.well-known/agent.json: https
+    # only, public addresses only (no loopback/private/link-local), no
+    # redirects. Allowing private networks also permits http; local dev only.
+    agent_card_fetch_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    agent_card_fetch_allow_private_networks: bool = False
+
     # Buyer write routes (quotes, proposals, negotiation, sessions, orders,
     # change requests) require a seller-issued API key. Set true to let
     # anonymous callers use them at the PUBLIC tier, as before.
