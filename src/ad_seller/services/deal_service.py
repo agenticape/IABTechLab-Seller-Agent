@@ -248,7 +248,116 @@ async def _resolve_accepted_negotiation(storage: Any, quote_id: str) -> Optional
     return None
 
 
-async def book_deal(request: Any) -> dict[str, Any]:
+def _quote_booking_terms(quote: dict[str, Any]) -> tuple[float, int, float]:
+    """``(final_cpm, impressions, gross_value)`` of a quote about to be booked."""
+    final_cpm = float((quote.get("pricing") or {}).get("final_cpm") or 0.0)
+    impressions = int((quote.get("terms") or {}).get("impressions") or 0)
+    return final_cpm, impressions, final_cpm * impressions / 1000.0
+
+
+def _booking_approval_required(gross_value: float, proposal_led: bool) -> bool:
+    """Whether booking a quote must wait for a human approval.
+
+    Mirrors ``ProposalHandlingFlow._approval_required`` so a deal reached
+    through quote booking is gated exactly as one reached through
+    ``POST /proposals``:
+
+    - Mandatory threshold: gross value (final CPM x impressions / 1000) at
+      or above ``approval_required_above_value`` (when > 0).
+    - Opt-in toggle: ``approval_gate_enabled`` with ``deal_booking`` in
+      ``approval_required_flows``, or ``proposal_decision`` when the
+      booking strikes a proposal-led negotiated price (the proposal's
+      decision would otherwise be bypassed through the quote).
+    """
+    from ..config import get_settings
+
+    settings = get_settings()
+    threshold = getattr(settings, "approval_required_above_value", 0.0) or 0.0
+    if threshold > 0 and gross_value >= threshold:
+        return True
+    if not getattr(settings, "approval_gate_enabled", False):
+        return False
+    flows = {f.strip() for f in (getattr(settings, "approval_required_flows", "") or "").split(",")}
+    return "deal_booking" in flows or (proposal_led and "proposal_decision" in flows)
+
+
+def _booking_approval_key(quote_id: str) -> str:
+    return f"approval_index:quote_booking:{quote_id}"
+
+
+async def _gate_quote_booking(
+    storage: Any, quote_id: str, quote: dict[str, Any], negotiation: Optional[dict[str, Any]]
+) -> Optional[dict[str, Any]]:
+    """Hold a gated quote booking for approval.
+
+    Returns ``None`` when the booking may proceed (no gate applies, or an
+    operator approved these exact terms). Returns a ``pending_approval``
+    payload when the booking is parked; the buyer re-submits the booking
+    after the decision. A rejected booking is a 409. An approval granted
+    for different terms (the negotiated price moved after the decision)
+    does not carry over: a fresh request is raised for the new terms.
+    """
+    from ..events.approval import ApprovalGate
+    from ..events.models import ApprovalStatus
+
+    final_cpm, impressions, gross_value = _quote_booking_terms(quote)
+    proposal_led = bool(
+        negotiation and negotiation.get("proposal_id") and negotiation["proposal_id"] != quote_id
+    )
+    if not _booking_approval_required(gross_value, proposal_led):
+        return None
+
+    gate = ApprovalGate(storage)
+    terms = {"final_cpm": final_cpm, "impressions": impressions}
+    existing_id = await storage.get(_booking_approval_key(quote_id))
+    existing = await gate.get_request(existing_id) if isinstance(existing_id, str) else None
+    if existing is not None and existing.context.get("terms") == terms:
+        if existing.status == ApprovalStatus.APPROVED:
+            return None
+        if existing.status == ApprovalStatus.REJECTED:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "booking_rejected",
+                    "message": "The seller declined to book this quote.",
+                    "approval_id": existing.approval_id,
+                },
+            )
+        if existing.status == ApprovalStatus.PENDING:
+            return _pending_booking_payload(quote_id, existing.approval_id)
+
+    approval = await gate.request_approval(
+        flow_id=f"booking-{quote_id}",
+        flow_type="deal_booking",
+        gate_name="deal_booking",
+        context={
+            "quote_id": quote_id,
+            "product_id": (quote.get("product") or {}).get("product_id"),
+            "deal_type": quote.get("deal_type"),
+            "buyer_tier": quote.get("buyer_tier"),
+            "terms": terms,
+            "gross_value": round(gross_value, 2),
+            "negotiation_id": (negotiation or {}).get("negotiation_id"),
+            "proposal_id": (negotiation or {}).get("proposal_id") if proposal_led else None,
+        },
+        flow_state_snapshot={"quote_id": quote_id, "terms": terms},
+    )
+    await storage.set(_booking_approval_key(quote_id), approval.approval_id)
+    return _pending_booking_payload(quote_id, approval.approval_id)
+
+
+def _pending_booking_payload(quote_id: str, approval_id: str) -> dict[str, Any]:
+    return {
+        "status": "pending_approval",
+        "quote_id": quote_id,
+        "approval_id": approval_id,
+        "message": (
+            "This booking requires seller approval. Re-submit the booking once it is approved."
+        ),
+    }
+
+
+async def book_deal(request: Any, buyer_context: Any = None) -> dict[str, Any]:
     """Book a deal from a previously issued quote (``DealBookingRequestModel``).
 
     Validates the quote, generates a Deal ID, and returns confirmed terms.
@@ -256,6 +365,12 @@ async def book_deal(request: Any) -> dict[str, Any]:
     carries an ``audience_plan``, the plan is validated against seller
     capabilities, frozen onto the deal record as ``audience_plan_snapshot``,
     and the forensic hash is logged via ``ad_seller.audience.booking``.
+
+    A booking that the approval gate holds returns a ``pending_approval``
+    payload (no deal is minted; see ``_gate_quote_booking``).
+
+    ``buyer_context`` is the booking caller's verified context; its seat IDs
+    and advertiser domains become the deal's OpenRTB ``wseat``/``wadomain``.
     """
     from ..models.quotes import DealBookingResponse, DealBookingStatus, QuoteStatus
     from ..storage.factory import get_storage
@@ -362,12 +477,21 @@ async def book_deal(request: Any) -> dict[str, Any]:
                 },
             )
 
+    # Approval gate: the same human-in-the-loop rules POST /proposals
+    # enforces, applied at the price actually being booked.
+    pending = await _gate_quote_booking(storage, request.quote_id, quote, negotiation)
+    if pending is not None:
+        return pending
+
     # Generate deal
     now = datetime.utcnow()
     deal_id = f"DEMO-{uuid.uuid4().hex[:12].upper()}"
     deal_expires = now + timedelta(days=30)
 
     from ..models.quotes import QuotePricing, QuoteProductInfo, QuoteTerms
+    from .deals_api import build_openrtb_deal_params, verified_deal_allow_lists
+
+    wseat, wadomain = verified_deal_allow_lists(buyer_context)
 
     deal = DealBookingResponse(
         deal_id=deal_id,
@@ -384,13 +508,14 @@ async def book_deal(request: Any) -> dict[str, Any]:
             "dv360": f"In DV360, add deal {deal_id} under Inventory > My Inventory > Deals",
             "xandr": f"In Xandr, navigate to Deals and enter Deal ID: {deal_id}",
         },
-        openrtb_params={
-            "id": deal_id,
-            "bidfloor": quote["pricing"]["final_cpm"],
-            "bidfloorcur": "USD",
-            "at": 3 if quote["deal_type"] == "PA" else 1,
-            "wseat": [],
-        },
+        openrtb_params=build_openrtb_deal_params(
+            deal_id,
+            quote["deal_type"],
+            quote["pricing"]["final_cpm"],
+            currency=quote["pricing"].get("currency") or "USD",
+            seat_ids=wseat,
+            advertiser_domains=wadomain,
+        ),
         created_at=now.isoformat() + "Z",
     )
 
@@ -419,6 +544,10 @@ async def book_deal(request: Any) -> dict[str, Any]:
     quote["status"] = QuoteStatus.BOOKED.value
     quote["deal_id"] = deal_id
     await storage.set_quote(request.quote_id, quote, ttl=86400)
+
+    from .quote_service import commit_pg_hold
+
+    await commit_pg_hold(storage, quote)
 
     # Store the deal in deal storage (coexists with proposal-based deals).
     # The snapshot fields land on the persisted record so
@@ -554,27 +683,103 @@ async def get_deal_performance(deal_id: str) -> dict[str, Any]:
 # =============================================================================
 
 
-def generate_deal_from_proposal(proposal_id: str) -> dict[str, Any]:
-    """Generate a deal from an accepted proposal (legacy demo flow)."""
-    from ..flows import DealGenerationFlow
+_BOOKABLE_PROPOSAL_STATUSES = ("accepted", "approved")
 
+
+async def generate_deal_from_proposal(proposal_id: str, buyer_context: Any) -> dict[str, Any]:
+    """Generate a deal from a stored, accepted proposal (legacy ``POST /deals``).
+
+    - Unknown proposal: 404 ``proposal_not_found``.
+    - Not submitted by the caller's API key: 409 ``proposal_not_bookable``.
+      Ownership is the key-derived pricing key recorded at submission; a
+      proposal submitted without a key has no owner and cannot be turned
+      into a deal here.
+    - Not accepted (the proposal decision, an approval, or an accepted
+      negotiation): 409 ``proposal_not_accepted``.
+
+    The deal carries the proposal's terms; an accepted negotiation's agreed
+    price replaces the proposed price. A repeat call returns the deal
+    already generated for the proposal.
+    """
+    from ..flows import DealGenerationFlow
+    from ..storage.factory import get_storage
+
+    storage = await get_storage()
+    proposal = await storage.get_proposal(proposal_id)
+    if not isinstance(proposal, dict):
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "proposal_not_found",
+                "message": f"Proposal '{proposal_id}' not found.",
+            },
+        )
+
+    caller_key = (
+        buyer_context.get_pricing_key()
+        if getattr(buyer_context, "authentication_method", None) == "api_key"
+        else None
+    )
+    if (
+        caller_key is None
+        or proposal.get("buyer_auth") != "api_key"
+        or proposal.get("buyer_key") != caller_key
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "proposal_not_bookable",
+                "message": f"Proposal '{proposal_id}' was not submitted by this API key.",
+            },
+        )
+
+    if isinstance(proposal.get("deal"), dict):
+        return proposal["deal"]
+
+    price = proposal.get("accepted_price", proposal.get("price"))
+    accepted = proposal.get("status") in _BOOKABLE_PROPOSAL_STATUSES
+    negotiation = await storage.get_negotiation(proposal_id)
+    if isinstance(negotiation, dict) and negotiation.get("status") == "accepted":
+        rounds = negotiation.get("rounds") or []
+        agreed = rounds[-1].get("seller_price") if rounds else None
+        if agreed is not None:
+            price, accepted = agreed, True
+    if not accepted:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "proposal_not_accepted",
+                "message": (
+                    f"Proposal '{proposal_id}' is '{proposal.get('status')}'; only accepted "
+                    "or approved proposals can be turned into deals."
+                ),
+            },
+        )
+
+    from .deals_api import verified_deal_allow_lists
+
+    wseat, wadomain = verified_deal_allow_lists(buyer_context)
     flow = DealGenerationFlow()
     result = flow.generate_deal(
         proposal_id=proposal_id,
         proposal_data={
             "status": "accepted",
-            "deal_type": "preferred_deal",
-            "price": 15.0,
-            "product_id": "display",
-            "impressions": 1000000,
-            "start_date": "2026-01-01",
-            "end_date": "2026-03-31",
+            "deal_type": proposal.get("deal_type"),
+            "price": price,
+            "product_id": proposal.get("product_id"),
+            "impressions": proposal.get("impressions"),
+            "start_date": proposal.get("start_date"),
+            "end_date": proposal.get("end_date"),
+            "buyer_id": proposal.get("buyer_id") or "",
+            "wseat": wseat,
+            "wadomain": wadomain,
         },
     )
 
     if not result.get("deal_id"):
         raise HTTPException(status_code=400, detail="Failed to generate deal")
 
+    await storage.set_proposal(proposal_id, {**proposal, "deal": result})
     return result
 
 
@@ -648,6 +853,7 @@ async def create_deal_from_template(
         deal_type=deal_type_enum,
         volume=request.impressions or 0,
         inventory_type=product.inventory_type,
+        floor_price=product.floor_cpm,
     )
 
     final_cpm = decision.final_price

@@ -124,6 +124,15 @@ async def resume_flow(approval_id: str) -> dict[str, Any]:
     if request.flow_type == "ssp_distribution" and request.gate_name == "dsp_resolution":
         return await _resume_ssp_distribution(request, response)
 
+    if request.flow_type == "deal_booking" and request.gate_name == "deal_booking":
+        # Nothing to re-run: the buyer re-submits POST /api/v1/deals, which
+        # books once the approval for those exact terms is approved.
+        return {
+            "quote_id": request.context.get("quote_id"),
+            "status": "approved" if response.decision == "approve" else "rejected",
+            "resumed_from_approval": request.approval_id,
+        }
+
     raise HTTPException(
         status_code=400,
         detail=f"Unknown flow_type/gate_name: {request.flow_type}/{request.gate_name}",
@@ -314,6 +323,15 @@ async def _resume_proposal_flow(request, response):
         flow.state.status = ExecutionStatus.COUNTER_PENDING
 
     flow.state.completed_at = datetime.utcnow()
+
+    if response.decision in ("approve", "reject"):
+        from ..storage.factory import get_storage
+
+        storage = await get_storage()
+        stored = await storage.get_proposal(flow.state.proposal_id)
+        if isinstance(stored, dict):
+            stored["status"] = "approved" if response.decision == "approve" else "rejected"
+            await storage.set_proposal(flow.state.proposal_id, stored)
 
     # Emit event for the decision
     event_map = {

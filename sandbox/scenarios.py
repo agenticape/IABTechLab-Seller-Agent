@@ -265,6 +265,35 @@ def scenario_1_discovery(ctx: Ctx, sc: Scenario) -> None:
             "avails omit deliveryConfidence (no forecast source, never fabricated)",
         )
 
+    # Discovery answers carry tier pricing, so a tier claimed in the body
+    # without a seller-issued key must floor to public (price ranges only).
+    claim = {"query": "ctv sports pricing", "buyer_tier": "agency", "agency_id": "agency-made-up"}
+    r = ctx.call("POST", "/discovery", body=claim)
+    if sc.check(r.status_code == 200, "anonymous POST /discovery answers", r.text[:200]):
+        d = r.json()
+        sc.check(
+            d.get("access_tier") == "public",
+            "anonymous discovery claiming agency tier is answered at the public tier",
+            f"access_tier={d.get('access_tier')}",
+        )
+        sc.check(not _floor_field_leaks(d), "discovery answer exposes no floor/reserve fields")
+    r = ctx.call("POST", "/discovery", who="agency", body={"query": "ctv sports pricing"})
+    sc.check(
+        r.status_code == 200 and r.json().get("access_tier") == "agency",
+        "discovery with the agency key is answered at the agency tier",
+        r.text[:200],
+    )
+    r = ctx.call(
+        "POST",
+        "/media-kit/search",
+        body={"query": "sports", "buyer_tier": "advertiser", "agency_id": "agency-made-up"},
+    )
+    sc.check(
+        r.status_code == 200 and not _floor_field_leaks(r.json()),
+        "anonymous media-kit search with a claimed tier answers without floor fields",
+        f"HTTP {r.status_code}",
+    )
+
 
 def scenario_2_tiered_pricing(ctx: Ctx, sc: Scenario) -> None:
     pid = "inv-ctv-apex-series"
@@ -334,13 +363,10 @@ def scenario_2_tiered_pricing(ctx: Ctx, sc: Scenario) -> None:
             f"advertiser + {volume:,} imps volume discount -> ${p['final_price']:.2f} "
             f"(tier {p['tier_discount']:.0%} + volume {p['volume_discount']:.0%})"
         )
-        if p["final_price"] < floor:
-            sc.warn(
-                f"{msg} is BELOW the product floor ${floor:.2f}: the pricing engine only "
-                "enforces the global floor (DEFAULT_PRICE_FLOOR_CPM), not the product floor"
-            )
-        else:
-            sc.check(True, msg)
+        sc.check(
+            p["final_price"] >= floor - 0.005,
+            f"{msg} stays at or above the product floor ${floor:.2f}",
+        )
 
 
 def scenario_3_quote_then_book(ctx: Ctx, sc: Scenario) -> None:
@@ -353,6 +379,9 @@ def scenario_3_quote_then_book(ctx: Ctx, sc: Scenario) -> None:
         "flight_start": "2027-01-01",
         "flight_end": "2027-01-31",
     }
+    r = ctx.call("POST", "/api/v1/quotes", body={**quote_body, "idempotency_key": _idem("anon")})
+    sc.check(r.status_code == 401, "anonymous POST /api/v1/quotes is rejected (401)", r.text[:200])
+
     r = ctx.call("POST", "/api/v1/quotes", who="advertiser", body=quote_body)
     if not sc.check(r.status_code == 200, "advertiser POST /api/v1/quotes (PD, 1M imps)", r.text):
         raise ScenarioAbort
@@ -380,6 +409,51 @@ def scenario_3_quote_then_book(ctx: Ctx, sc: Scenario) -> None:
         f"HTTP {r.status_code}",
     )
 
+    # target_cpm is honoured only within the buyer's own tier policy.
+    floor = ctx.floor(pid)
+    r = ctx.call(
+        "POST",
+        "/api/v1/quotes",
+        who="seat",
+        body={
+            **quote_body,
+            "idempotency_key": _idem("quote-seat-target"),
+            "target_cpm": _micros(floor),
+        },
+    )
+    if sc.check(
+        r.status_code == 200, f"seat quotes with target_cpm at the floor ${floor:.2f}", r.text
+    ):
+        pricing = r.json()["quote"]["pricing"]
+        final = _money(pricing["final_cpm"])
+        sc.check(
+            final > floor + 0.005,
+            f"seat target below its tier price is not honoured (quoted ${final:.2f})",
+        )
+        sc.check(
+            f"Final price: ${final:.2f} CPM" in pricing["rationale"],
+            "quote rationale states the price actually quoted",
+            pricing["rationale"],
+        )
+    agency_price = ctx.products[pid]["base_cpm"] * (1 - EXPECTED_TIER_DISCOUNT["agency"])
+    target = round(max(floor + 0.1, agency_price * 0.95), 2)
+    r = ctx.call(
+        "POST",
+        "/api/v1/quotes",
+        who="agency",
+        body={
+            **quote_body,
+            "idempotency_key": _idem("quote-agency-target"),
+            "target_cpm": _micros(target),
+        },
+    )
+    if sc.check(r.status_code == 200, f"agency quotes with target_cpm ${target:.2f}", r.text):
+        final = _money(r.json()["quote"]["pricing"]["final_cpm"])
+        sc.check(
+            abs(final - target) < 0.005,
+            f"agency target inside its negotiation band is honoured (quoted ${final:.2f})",
+        )
+
     book_body = {"idempotency_key": _idem("book-pd"), "quote_id": qid}
     r = ctx.call("POST", "/api/v1/deals", body=book_body)
     sc.check(r.status_code == 401, "anonymous booking is rejected (401)", f"HTTP {r.status_code}")
@@ -405,6 +479,15 @@ def scenario_3_quote_then_book(ctx: Ctx, sc: Scenario) -> None:
         f"OpenRTB activation: pmp.deals[].id={ortb.get('id')} "
         f"bidfloor=${_money(ortb.get('bidfloor')):.2f} at={ortb.get('at')} "
         f"wseat={ortb.get('wseat')} wadomain={ortb.get('wadomain')}"
+    )
+    sc.check(ortb.get("at") == 3, f"PD deal is fixed price (OpenRTB at={ortb.get('at')})")
+    ident = ctx.keys["buyers"]["advertiser"]["identity"]
+    want_seats = [s for s in [ident.get("seat_id"), *ident.get("seat_ids", [])] if s]
+    sc.check(
+        ortb.get("wseat") == want_seats
+        and ortb.get("wadomain") == ident.get("advertiser_domains", []),
+        "OpenRTB wseat/wadomain carry the advertiser key's seat ids and domains",
+        f"wseat={ortb.get('wseat')} wadomain={ortb.get('wadomain')} expected {want_seats}",
     )
     for dsp, text in (deal.get("activation_instructions") or {}).items():
         sc.info(f"activation ({dsp}): {text}")
@@ -435,7 +518,7 @@ def scenario_3_quote_then_book(ctx: Ctx, sc: Scenario) -> None:
     r = ctx.call("GET", f"/api/v1/deals/{deal_id}", who="advertiser")
     sc.check(r.status_code == 200, f"GET /api/v1/deals/{deal_id} reads the deal back", r.text[:200])
 
-    # PG: fixed price + guaranteed terms should not run as a first-price auction.
+    # PG: fixed price + guaranteed terms must not run as a first-price auction.
     pg_pid = "inv-ctv-apex-series"
     r = ctx.call(
         "POST",
@@ -465,10 +548,11 @@ def scenario_3_quote_then_book(ctx: Ctx, sc: Scenario) -> None:
                 f"PG Deal ID {pg['deal_id']} guaranteed={pg['terms'].get('guaranteed')} "
                 f"openrtb at={at}"
             )
-            if at == 1:
-                sc.warn("PG deal carries at=1 (first-price auction) - upstream issue #147")
-            else:
-                sc.check(True, f"PG deal at={at}")
+            sc.check(at == 3, f"PG deal is fixed price (OpenRTB at={at})")
+    sc.info(
+        "PG soft holds only apply to products with a declared maximum_impressions; "
+        "the CSV catalog declares none, so they are covered by the unit tests"
+    )
 
 
 def scenario_4_negotiation(ctx: Ctx, sc: Scenario) -> None:
@@ -529,6 +613,11 @@ def scenario_4_negotiation(ctx: Ctx, sc: Scenario) -> None:
             seller is None or seller >= floor,
             f"round {i}: seller price ${seller:.2f} is not below the floor ${floor:.2f}",
         )
+        if offer < floor and action == "counter":
+            sc.check(
+                seller > floor + 0.005,
+                f"round {i}: below-floor offer is countered above the floor (${seller:.2f})",
+            )
         sc.check(
             "floor" not in text and "minimum" not in text and not _floor_field_leaks(rnd),
             f"round {i}: response never names the floor",
@@ -552,10 +641,6 @@ def scenario_4_negotiation(ctx: Ctx, sc: Scenario) -> None:
     if agreed is None:
         sc.check(False, "negotiation produced an agreed price")
         raise ScenarioAbort
-    sc.info(
-        "note: a below-floor offer is countered AT the floor by design "
-        "(negotiation_engine step 3.5), so a lowballing buyer learns the floor price"
-    )
 
     r = ctx.call(
         "POST",
@@ -631,6 +716,29 @@ def scenario_5_approval_gate(ctx: Ctx, sc: Scenario) -> None:
             f"below-threshold proposal is decided without a human (status={small['status']})",
         )
 
+    # Above the floor but below the agency tier price: countered, not accepted.
+    agency_ident = ctx.keys["buyers"]["agency"]["identity"]
+    nba_base = ctx.products[base["product_id"]]["base_cpm"]
+    between = round((ctx.floor(base["product_id"]) + nba_base * 0.9) / 2, 2)
+    r = ctx.call(
+        "POST",
+        "/proposals",
+        who="agency",
+        body={
+            **{k: v for k, v in base.items() if k != "advertiser_id"},
+            "agency_id": agency_ident["agency_id"],
+            "price": between,
+            "impressions": 100_000,
+        },
+    )
+    if sc.check(
+        r.status_code == 200, f"agency proposes ${between:.2f} (floor < offer < tier price)", r.text
+    ):
+        sc.check(
+            r.json()["recommendation"] == "counter",
+            f"proposal below the agency tier price is countered (got {r.json()['recommendation']})",
+        )
+
     big = _submit_proposal(
         ctx, sc, "high-value", {**base, "price": 50.0, "impressions": 10_000_000}
     )
@@ -684,6 +792,43 @@ def scenario_5_approval_gate(ctx: Ctx, sc: Scenario) -> None:
     ok = r.status_code == 200 and r.json().get("status") == "accepted"
     sc.check(ok, "resumed flow finalises the proposal as accepted", r.text[:300])
 
+    # Legacy POST /deals: key required, the caller's own accepted proposal,
+    # and the deal carries the proposal's real terms.
+    pid_big = big["proposal_id"]
+    r = ctx.call("POST", "/deals", body={"proposal_id": pid_big})
+    sc.check(
+        r.status_code == 401, "anonymous POST /deals is rejected (401)", f"HTTP {r.status_code}"
+    )
+    r = ctx.call("POST", "/deals", who="advertiser", body={"proposal_id": "prop-does-not-exist"})
+    sc.check(
+        r.status_code == 404,
+        "POST /deals for an unknown proposal is a 404",
+        f"HTTP {r.status_code}",
+    )
+    r = ctx.call("POST", "/deals", who="agency", body={"proposal_id": pid_big})
+    sc.check(
+        r.status_code == 409,
+        "another buyer cannot turn this proposal into a deal (409)",
+        f"HTTP {r.status_code} {r.text[:200]}",
+    )
+    r = ctx.call("POST", "/deals", who="advertiser", body={"proposal_id": pid_big})
+    if sc.check(
+        r.status_code == 200, "advertiser POST /deals for its approved proposal", r.text[:300]
+    ):
+        d = r.json()
+        sc.info(f"legacy Deal ID {d['deal_id']}: {d['deal_type']} ${d['price']:.2f}")
+        sc.check(
+            d["price"] == 50.0 and d["deal_type"] == "programmaticguaranteed",
+            "legacy deal carries the proposal's price and deal type (not demo terms)",
+            json.dumps(d)[:300],
+        )
+        sc.check(
+            d["openrtb_params"].get("at") == 3
+            and (d["openrtb_params"].get("ext") or {}).get("impressions") == 10_000_000,
+            "legacy PG deal is fixed price with the proposal's guaranteed impressions",
+            json.dumps(d["openrtb_params"]),
+        )
+
     big2 = _submit_proposal(
         ctx, sc, "high-value #2", {**base, "price": 45.0, "impressions": 8_000_000}
     )
@@ -702,9 +847,51 @@ def scenario_5_approval_gate(ctx: Ctx, sc: Scenario) -> None:
             "resumed flow finalises it as rejected",
             r.text[:300],
         )
+        r = ctx.call("POST", "/deals", who="advertiser", body={"proposal_id": big2["proposal_id"]})
+        sc.check(
+            r.status_code == 409,
+            "a rejected proposal cannot be turned into a deal (409)",
+            f"HTTP {r.status_code}",
+        )
+
+    # Quote booking goes through the same approval gate (#129).
+    r = ctx.call(
+        "POST",
+        "/api/v1/quotes",
+        who="advertiser",
+        body={
+            "idempotency_key": _idem("quote-big-pd"),
+            "product_id": base["product_id"],
+            "deal_type": "PD",
+            "impressions": 8_000_000,
+            "flight_start": "2027-03-01",
+            "flight_end": "2027-05-31",
+        },
+    )
+    if sc.check(r.status_code == 200, "advertiser quotes a high-value PD (8M imps)", r.text[:200]):
+        q = r.json()["quote"]
+        gross = _money(q["pricing"]["final_cpm"]) * 8_000_000 / 1000
+        book = {"idempotency_key": _idem("book-big-pd"), "quote_id": q["quote_id"]}
+        r = ctx.call("POST", "/api/v1/deals", who="advertiser", body=book)
+        held = r.status_code == 202 and r.json().get("status") == "pending_approval"
+        if sc.check(held, f"booking ${gross:,.0f} gross is held for approval (202)", r.text[:300]):
+            aid = r.json()["approval_id"]
+            r = ctx.call(
+                "POST",
+                f"/approvals/{aid}/decide",
+                who="operator",
+                body={"decision": "approve", "decided_by": "sandbox-operator"},
+            )
+            sc.check(r.status_code == 200, "operator approves the booking", r.text[:200])
+            r = ctx.call("POST", "/api/v1/deals", who="advertiser", body=book)
+            sc.check(
+                r.status_code == 200 and r.json()["deal"]["deal_id"].startswith("DEMO-"),
+                "re-submitted booking books once approved",
+                r.text[:200],
+            )
     sc.info(
-        "known gaps here: #129 (booking a negotiated quote ignores the proposal's approval), "
-        "#131 (POST /proposals has no idempotency key), #118 (silent deterministic fallback)"
+        "known gaps here: #131 (POST /proposals has no idempotency key), "
+        "#118 (silent deterministic fallback)"
     )
 
 

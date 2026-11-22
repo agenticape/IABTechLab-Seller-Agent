@@ -52,6 +52,9 @@ from ad_seller.flows.proposal_handling_flow import ProposalHandlingFlow  # noqa:
 from ad_seller.interfaces.api.main import _get_optional_api_key_record, app  # noqa: E402
 from ad_seller.services import negotiation_service  # noqa: E402
 
+# Exercises the anonymous PUBLIC-tier path, which is opt-in.
+pytestmark = pytest.mark.usefixtures("anonymous_buyer_writes")
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -87,7 +90,7 @@ def _make_buyer_context(buyer_tier="agency", agency_id="agency-1"):
     return _build_buyer_context(buyer_tier=buyer_tier, agency_id=agency_id)
 
 
-def _proposal_data(price=25.0, product_id="ctv-premium-sports"):
+def _proposal_data(price=35.0, product_id="ctv-premium-sports"):
     return {
         "product_id": product_id,
         "deal_type": "preferred_deal",
@@ -99,7 +102,7 @@ def _proposal_data(price=25.0, product_id="ctv-premium-sports"):
     }
 
 
-def _proposal_request(product_id="ctv-premium-sports", price=25.0):
+def _proposal_request(product_id="ctv-premium-sports", price=35.0):
     request = MagicMock()
     request.product_id = product_id
     request.deal_type = "preferred_deal"
@@ -277,7 +280,7 @@ class TestBudgetFallback:
         result, _ = await _run_flow(
             budget=0.2,
             crew=_slow_crew(30.0),
-            proposal_data=_proposal_data(price=25.0),
+            proposal_data=_proposal_data(price=35.0),
             products={"ctv-premium-sports": _make_product(floor_cpm=20.0)},
         )
         elapsed = time.monotonic() - started
@@ -374,7 +377,7 @@ class TestFallbackPersistence:
                     json={
                         "product_id": "ctv-premium-sports",
                         "deal_type": "preferred_deal",
-                        "price": 25.0,  # above floor -> deterministic accept
+                        "price": 35.0,  # at the public tier price -> deterministic accept
                         "impressions": 1000000,
                         "start_date": "2026-08-01",
                         "end_date": "2026-08-31",

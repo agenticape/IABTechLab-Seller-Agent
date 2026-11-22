@@ -18,6 +18,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from iab_agentic_primitives.primitives import DealStatus
 from iab_agentic_primitives.protocol import DealBookingRequest, DealBookingResponse
 
@@ -55,9 +56,18 @@ _TIER_ORDER = ("public", "seat", "agency", "advertiser")
 
 
 @router.post("/deals", response_model=DealResponse, tags=["Deals"])
-async def generate_deal(request: DealRequest):
-    """Generate a deal from an accepted proposal."""
-    result = deal_service.generate_deal_from_proposal(request.proposal_id)
+async def generate_deal(
+    request: DealRequest,
+    api_key_record=Depends(deps._require_api_key_record),
+):
+    """Generate a deal from an accepted proposal.
+
+    Requires an API key. The proposal must exist (404), be accepted or
+    approved, and belong to the calling key's buyer (409 otherwise); the
+    deal carries the proposal's own terms.
+    """
+    buyer_context = deps._build_buyer_context(api_key_record=api_key_record)
+    result = await deal_service.generate_deal_from_proposal(request.proposal_id, buyer_context)
 
     return DealResponse(
         deal_id=result["deal_id"],
@@ -116,6 +126,13 @@ async def book_deal(
     (403 ``buyer_mismatch`` / ``buyer_tier_mismatch`` otherwise). A quote
     priced at the PUBLIC tier (no identity asserted at quote time) has
     nothing buyer-specific to steal, so any authenticated buyer may book it.
+
+    **Approval gate:** a booking whose gross value (final CPM x
+    impressions / 1000) reaches ``APPROVAL_REQUIRED_ABOVE_VALUE``, or that
+    the opt-in gate covers, is held for a human decision: HTTP 202 with
+    ``status: pending_approval`` and an ``approval_id``, no deal minted.
+    Re-submit the booking after approval; a rejected booking is a 409
+    ``booking_rejected``.
 
     **Idempotency (FD-12):** the request carries a required
     ``idempotency_key``. A replay with a key already used for an identical
@@ -255,7 +272,12 @@ async def book_deal(
         existing = await deal_service.get_deal(prior)
         return cm.internal_deal_to_response(existing)
 
-    result = await deal_service.book_deal(internal_request)
+    result = await deal_service.book_deal(internal_request, buyer_context=context)
+    if result.get("status") == "pending_approval":
+        # Held by the approval gate: no deal exists yet and nothing is
+        # recorded under the idempotency key, so the buyer re-submits the
+        # same booking once the operator has decided.
+        return JSONResponse(status_code=202, content=result)
 
     try:
         await storage.set(
@@ -272,6 +294,8 @@ async def book_deal(
 @router.post("/agentic-audience/match", tags=["Audience"])
 async def agentic_audience_match(request: AgenticAudienceMatchRequest):
     """Match a buyer-supplied agentic `AudienceRef` against this seller.
+
+    Public by design: a stateless score that stores nothing.
 
     Per proposal §5.7 + §6 row 11. Returns a match score and quality bucket.
     The score is mock-quality (deterministic from sha256 of `identifier`);
@@ -443,9 +467,12 @@ async def get_deal_performance(deal_id: str):
 @router.post("/api/v1/deals/bulk", tags=["Bulk Operations"], response_model=BulkDealResponse)
 async def bulk_deal_operations(
     request: BulkDealRequest,
-    api_key_record=Depends(deps._get_optional_api_key_record),
+    _operator=Depends(deps._require_operator_api_key_record),
 ):
     """Process a batch of deal operations (create/update/cancel).
+
+    Operator-only: operations act on any quote or deal by id, with none of
+    the ownership, tier or approval checks ``POST /api/v1/deals`` applies.
 
     Enables the Deal Library buyer agent to efficiently manage multiple
     deals in a single request. Each operation is processed independently
@@ -480,8 +507,15 @@ async def push_deal_to_buyers(
 
 
 @router.get("/api/v1/deals/{deal_id}/buyer-status", tags=["Deal Booking"])
-async def get_deal_buyer_status(deal_id: str, buyer_url: str):
+async def get_deal_buyer_status(
+    deal_id: str,
+    buyer_url: str,
+    _operator=Depends(deps._require_operator_api_key_record),
+):
     """Query a buyer for their acceptance status of a deal.
+
+    Operator-only, like ``POST /api/v1/deals/push``: the seller calls the
+    caller-supplied ``buyer_url``.
 
     Polls the buyer's deal status endpoint to check if the deal
     has been approved, rejected, or is ready to serve.
@@ -506,8 +540,14 @@ async def distribute_deal_via_ssp(
 
 
 @router.get("/api/v1/deals/{deal_id}/ssp-troubleshoot", tags=["Deal Booking"])
-async def troubleshoot_deal_via_ssp(deal_id: str, ssp_name: str):
+async def troubleshoot_deal_via_ssp(
+    deal_id: str,
+    ssp_name: str,
+    _operator=Depends(deps._require_operator_api_key_record),
+):
     """Troubleshoot a deal via SSP diagnostics.
+
+    Operator-only, like ``POST /api/v1/deals/distribute``.
 
     Calls the SSP's troubleshooting tool (e.g., PubMatic's
     deal_troubleshooting) to diagnose performance issues.
@@ -545,8 +585,11 @@ async def register_curator(
 
 
 @router.post("/api/v1/deals/curated", tags=["Curators"], status_code=201)
-async def create_curated_deal(request: CuratedDealRequest):
-    """Create a deal with curator overlay.
+async def create_curated_deal(
+    request: CuratedDealRequest,
+    _operator=Depends(deps._require_operator_api_key_record),
+):
+    """Create a deal with curator overlay. Operator-only.
 
     The curator's fee is added on top of the publisher's base price.
     The curator appears as a node in the deal's schain. The buyer
@@ -564,9 +607,9 @@ async def create_curated_deal(request: CuratedDealRequest):
 async def migrate_deal(
     deal_id: str,
     request: DealMigrationRequest,
-    api_key_record=Depends(deps._get_optional_api_key_record),
+    _operator=Depends(deps._require_operator_api_key_record),
 ):
-    """Migrate (replace) an existing deal with a new one.
+    """Migrate (replace) an existing deal with a new one. Operator-only.
 
     Creates a replacement deal with parent_deal_id lineage pointing
     to the old deal, then deprecates the old deal. The buyer's Deal
@@ -581,8 +624,9 @@ async def migrate_deal(
 async def deprecate_deal(
     deal_id: str,
     request: DealDeprecationRequest,
+    _operator=Depends(deps._require_operator_api_key_record),
 ):
-    """Deprecate a deal with reason and optional replacement.
+    """Deprecate a deal with reason and optional replacement. Operator-only.
 
     Marks the deal as deprecated rather than cancelled — preserving
     the history that this deal was intentionally sunset. If a

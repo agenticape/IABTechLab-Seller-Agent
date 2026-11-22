@@ -27,6 +27,7 @@ def build_negotiation_engine():
     (``counter_proposal``) and the chat adapter build the engine here so the
     negotiation behavior stays identical across surfaces (EP-3.2).
     """
+    from ..config import get_settings
     from ..engines.negotiation_engine import NegotiationEngine
     from ..engines.pricing_rules_engine import PricingRulesEngine
     from ..engines.yield_optimizer import YieldOptimizer
@@ -35,7 +36,11 @@ def build_negotiation_engine():
     config = TieredPricingConfig(seller_organization_id="default")
     pricing_engine = PricingRulesEngine(config)
     yield_opt = YieldOptimizer()
-    return NegotiationEngine(pricing_engine, yield_opt)
+    return NegotiationEngine(
+        pricing_engine,
+        yield_opt,
+        below_floor_counter_share=get_settings().negotiation_below_floor_counter_share,
+    )
 
 
 async def _persist_negotiation(storage: Any, proposal_id: str, data: dict[str, Any]) -> None:
@@ -233,6 +238,10 @@ async def submit_proposal(
             "proposal_id": proposal_id,
             "recommendation": result.get("recommendation"),
             "status": result.get("status"),
+            # Who submitted it: legacy POST /deals only turns a proposal into
+            # a deal for the API key that submitted it.
+            "buyer_key": buyer_context.get_pricing_key(),
+            "buyer_auth": getattr(buyer_context, "authentication_method", None),
         },
     )
     product = catalog["products"].get(request.product_id)

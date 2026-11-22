@@ -167,6 +167,9 @@ MANAGER_LLM_MODEL=llama3
 | `DEFAULT_CURRENCY` | `str` | `"USD"` | Default currency for pricing |
 | `MIN_DEAL_VALUE` | `float` | `1000.0` | Minimum deal value |
 | `DEFAULT_PRICE_FLOOR_CPM` | `float` | `10.0` | Global default price floor (CPM) |
+| `NEGOTIATION_BELOW_FLOOR_COUNTER_SHARE` | `float` | unset | Share (0-1) of the gap between the product floor and the seller's last position kept when countering a below-floor offer. Unset uses each strategy's own share; `0` counters exactly at the floor |
+| `ALLOW_ANONYMOUS_BUYER_WRITES` | `bool` | `false` | Let callers without an API key use quotes, proposals, negotiation, sessions, orders and change requests at the PUBLIC tier. Off: those routes answer 401 `authentication_required` |
+| `PG_QUOTE_INVENTORY_HOLD_ENABLED` | `bool` | `true` | Programmatic Guaranteed quotes soft-hold their impressions against a product's `maximum_impressions` for the quote TTL (booked PG volume stays held until the flight ends); a PG quote that exceeds the remaining capacity is refused with 409 `insufficient_avails`. Uncapped products are not tracked |
 
 ## Yield Optimization
 
@@ -197,6 +200,8 @@ MANAGER_LLM_MODEL=llama3
 | `AGENT_REGISTRY_EXTRA_URLS` | `str` | `""` | Additional registry URLs (comma-separated) |
 | `AUTO_APPROVE_REGISTERED_AGENTS` | `bool` | `true` | Auto-approve agents found in a registry |
 | `REQUIRE_APPROVAL_FOR_UNREGISTERED` | `bool` | `true` | Require operator approval for unknown agents |
+| `AGENT_CARD_FETCH_TIMEOUT_SECONDS` | `float` | `5.0` | Timeout (0-30 s) for fetching a buyer-supplied `agent_url`'s `/.well-known/agent.json` |
+| `AGENT_CARD_FETCH_ALLOW_PRIVATE_NETWORKS` | `bool` | `false` | Off: the agent card fetch requires `https` and a host that resolves only to public addresses (no loopback, private, link-local or metadata addresses), and never follows redirects. On (local development only): also allows `http` and non-public hosts |
 
 ## Approval Configuration
 

@@ -52,6 +52,7 @@ PINNED_KEYS = {
     "AGENT_REGISTRY_URL",
     "AGENT_REGISTRY_EXTRA_URLS",
     "AAMP_REGISTRY_URL",
+    "AGENT_CARD_FETCH_ALLOW_PRIVATE_NETWORKS",
     "STORAGE_TYPE",
     "DATABASE_URL",
     "REDIS_URL",
@@ -110,7 +111,12 @@ def mock_only_violations(public_seller_url: bool = False) -> list[str]:
     csv_dir = (REPO_ROOT / s.csv_data_dir).resolve()
     if samples not in csv_dir.parents:
         problems.append(f"CSV_DATA_DIR={s.csv_data_dir!r} is outside data/csv/samples/")
-    for flag in ("gam_enabled", "freewheel_enabled", "inventory_sync_enabled"):
+    for flag in (
+        "gam_enabled",
+        "freewheel_enabled",
+        "inventory_sync_enabled",
+        "agent_card_fetch_allow_private_networks",
+    ):
         if getattr(s, flag):
             problems.append(f"{flag.upper()}=true")
     for field in (

@@ -61,6 +61,7 @@ async def get_pricing(
         base_price=await rate_card_service.resolve_base_cpm(product),
         buyer_context=buyer_context,
         volume=volume,
+        floor_price=product.floor_cpm,
     )
 
     return {
@@ -72,6 +73,101 @@ async def get_pricing(
         "volume_discount": decision.volume_discount,
         "rationale": decision.rationale,
     }
+
+
+def _inventory_hold_key(product_id: str) -> str:
+    return f"inventory_hold:{product_id}"
+
+
+def _active_holds(ledger: Any, now: datetime) -> dict[str, dict[str, Any]]:
+    """Unexpired entries of a product's hold ledger.
+
+    A ``held`` entry (an outstanding PG quote) lapses with the quote's TTL;
+    a ``booked`` entry (a PG quote that was booked) stays until its flight
+    ends, so booked guaranteed volume keeps consuming capacity.
+    """
+    if not isinstance(ledger, dict):
+        return {}
+    active: dict[str, dict[str, Any]] = {}
+    for quote_id, entry in ledger.items():
+        if not isinstance(entry, dict):
+            continue
+        try:
+            until = datetime.fromisoformat(str(entry.get("until", "")).rstrip("Z"))
+        except ValueError:
+            continue
+        if until > now:
+            active[quote_id] = entry
+    return active
+
+
+async def _reserve_pg_hold(
+    storage: Any,
+    product: Any,
+    quote_id: str,
+    impressions: int,
+    expires_at: datetime,
+    now: datetime,
+) -> None:
+    """Soft-hold ``impressions`` of a capacity-capped product for a PG quote.
+
+    Refuses (409 ``insufficient_avails``) when outstanding PG quotes and
+    booked PG volume already leave less than ``impressions`` of the
+    product's ``maximum_impressions``. Products without a declared cap
+    have no capacity to hold against and are not tracked.
+    """
+    from ..config import get_settings
+
+    if product.maximum_impressions is None or not get_settings().pg_quote_inventory_hold_enabled:
+        return
+
+    key = _inventory_hold_key(product.product_id)
+    ledger = _active_holds(await storage.get(key), now)
+    committed = sum(int(e.get("impressions") or 0) for e in ledger.values())
+    remaining = max(0, product.maximum_impressions - committed)
+    if impressions > remaining:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "insufficient_avails",
+                "message": (
+                    f"Only {remaining:,} guaranteed impressions are currently available "
+                    f"for '{product.product_id}'; requested {impressions:,}."
+                ),
+                "available_impressions": remaining,
+            },
+        )
+    ledger[quote_id] = {
+        "impressions": impressions,
+        "state": "held",
+        "until": expires_at.isoformat() + "Z",
+    }
+    await storage.set(key, ledger)
+
+
+async def commit_pg_hold(storage: Any, quote: dict[str, Any]) -> None:
+    """Turn a booked PG quote's soft hold into a booked commitment.
+
+    Called when the quote is booked: the hold no longer lapses with the
+    quote TTL but stays counted against capacity until the flight ends.
+    """
+    product_id = (quote.get("product") or {}).get("product_id")
+    quote_id = quote.get("quote_id")
+    if quote.get("deal_type") != "PG" or not product_id or not quote_id:
+        return
+    key = _inventory_hold_key(product_id)
+    ledger = await storage.get(key)
+    if not isinstance(ledger, dict) or quote_id not in ledger:
+        return
+    flight_end = (quote.get("terms") or {}).get("flight_end")
+    try:
+        until = datetime.fromisoformat(str(flight_end)) + timedelta(days=1)
+    except ValueError:
+        until = datetime.utcnow() + timedelta(days=30)
+    ledger = _active_holds(ledger, datetime.utcnow())
+    ledger[quote_id] = {**ledger.get(quote_id, {}), "state": "booked"}
+    ledger[quote_id]["until"] = until.isoformat() + "Z"
+    await storage.set(key, ledger)
 
 
 async def create_quote(
@@ -173,18 +269,21 @@ async def create_quote(
         deal_type=deal_type_enum,
         volume=request.impressions or 0,
         inventory_type=product.inventory_type,
+        floor_price=product.floor_cpm,
     )
 
-    # Evaluate target_cpm if provided
-    final_cpm = decision.final_price
+    # A target_cpm is honoured only where the verified buyer's tier allows
+    # it (at/above the waterfall price, or within the negotiation band for
+    # negotiation-enabled tiers), never below the floor; the rationale is
+    # rebuilt around the price actually quoted.
     if request.target_cpm is not None:
-        acceptable, _ = engine.is_price_acceptable(
-            offered_price=request.target_cpm,
-            product_floor=product.floor_cpm,
+        decision = engine.apply_target_price(
+            decision,
+            target_price=request.target_cpm,
             buyer_context=buyer_context,
+            floor_price=product.floor_cpm,
         )
-        if acceptable:
-            final_cpm = request.target_cpm
+    final_cpm = decision.final_price
 
     # Build timestamps
     now = datetime.utcnow()
@@ -228,8 +327,16 @@ async def create_quote(
         created_at=now.isoformat() + "Z",
     )
 
-    # Persist with 24-hour TTL
     storage = await get_storage()
+
+    # PG quotes promise guaranteed volume: hold it for the quote's TTL so the
+    # same capacity cannot be quoted twice.
+    if is_guaranteed:
+        await _reserve_pg_hold(
+            storage, product, quote_id, requested_volume, expires_at=expires_at, now=now
+        )
+
+    # Persist with 24-hour TTL
     await storage.set_quote(quote_id, quote.model_dump(mode="json"), ttl=86400)
 
     # Record in quote history for pricing verification (Layer 4)

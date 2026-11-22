@@ -38,6 +38,9 @@ from httpx import ASGITransport  # noqa: E402
 
 from ad_seller.interfaces.api.main import _get_optional_api_key_record, app  # noqa: E402
 
+# Exercises the anonymous PUBLIC-tier path, which is opt-in.
+pytestmark = pytest.mark.usefixtures("anonymous_buyer_writes")
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -237,7 +240,7 @@ class TestCreateQuote:
         assert detail["error"] == "unsupported_capability"
         assert detail["unsupported"][0]["capability"] == "linear_tv"
 
-    async def test_target_cpm_accepted_when_above_floor(self, client, mock_storage):
+    async def test_target_cpm_accepted_at_or_above_tier_price(self, client, mock_storage):
         with (
             patch(
                 "ad_seller.interfaces.api.main._get_static_product_catalog",
@@ -251,12 +254,12 @@ class TestCreateQuote:
                     product_id="ctv-premium-sports",
                     deal_type="PD",
                     impressions=1000000,
-                    target_cpm={"amount_micros": 32_000_000, "currency": "USD"},
+                    target_cpm={"amount_micros": 36_000_000, "currency": "USD"},
                 ),
             )
 
         assert resp.status_code == 200
-        assert resp.json()["quote"]["pricing"]["final_cpm"]["amount_micros"] == 32_000_000
+        assert resp.json()["quote"]["pricing"]["final_cpm"]["amount_micros"] == 36_000_000
 
     async def test_target_cpm_rejected_below_floor(self, client, mock_storage):
         with (

@@ -216,6 +216,13 @@ class Settings(BaseSettings):
     min_deal_value: float = 1000.0
     default_price_floor_cpm: float = 10.0
 
+    # Negotiation: share (0-1) of the gap between the product floor and the
+    # seller's last position that the seller keeps when countering a
+    # below-floor offer. Unset uses each strategy's own share
+    # (1 - gap_split_buyer_share), so the counter never lands exactly on
+    # the floor; 0 counters at the floor (the previous behaviour).
+    negotiation_below_floor_counter_share: Optional[float] = Field(default=None, ge=0, le=1)
+
     # Yield Optimization
     yield_optimization_enabled: bool = True
     programmatic_floor_multiplier: float = 1.2
@@ -238,6 +245,24 @@ class Settings(BaseSettings):
     # opt-in ``approval_gate_enabled`` toggle. A high-value deal can never
     # auto-finalize. 0.0 disables the threshold gate (opt-in behavior only).
     approval_required_above_value: float = 0.0
+
+    # Programmatic Guaranteed quotes hold their impressions against a
+    # capacity-capped product (maximum_impressions) for the quote TTL, and
+    # booked PG volume stays held until the flight ends, so the same
+    # guaranteed capacity cannot be quoted twice. Products without a cap
+    # are not tracked.
+    pg_quote_inventory_hold_enabled: bool = True
+
+    # Fetching a buyer-supplied agent_url's /.well-known/agent.json: https
+    # only, public addresses only (no loopback/private/link-local), no
+    # redirects. Allowing private networks also permits http; local dev only.
+    agent_card_fetch_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    agent_card_fetch_allow_private_networks: bool = False
+
+    # Buyer write routes (quotes, proposals, negotiation, sessions, orders,
+    # change requests) require a seller-issued API key. Set true to let
+    # anonymous callers use them at the PUBLIC tier, as before.
+    allow_anonymous_buyer_writes: bool = False
 
     # Session Configuration
     session_ttl_seconds: int = 604800  # 7 days
