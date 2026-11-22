@@ -119,3 +119,8 @@ data/csv/samples/aws_workshop/audiences_*
 data/csv/samples/aws_workshop/inventory_*
 # Internal issue tracker (not published)
 .beads/
+
+# Local sandbox state: personal config copy (may hold an LLM key), minted
+# API keys, SQLite DB and audit log. Only sandbox/.env.sandbox is committed.
+sandbox/.local/
+sandbox/.env.sandbox.local
