@@ -93,6 +93,7 @@ class TestDiscoveryTierVerification:
 
 
 class TestSessionTierVerification:
+    @pytest.mark.usefixtures("anonymous_buyer_writes")
     async def test_keyless_identity_claim_creates_public_session(self, client_factory):
         captured = {}
 
