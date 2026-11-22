@@ -3,7 +3,9 @@
 Write-ups of the pricing, booking and auth defects fixed on this fork, ready
 to file against [IABTechLab/seller-agent](https://github.com/IABTechLab/seller-agent).
 Each entry maps to one commit on the fork, so each fix can be cherry-picked
-into its own upstream PR together with its regression test.
+into its own upstream PR together with its regression test. Paste-ready
+issue and PR text, with the upstream branches, is in
+[upstream-submission.md](upstream-submission.md).
 
 All repros use the fictional `aws_workshop` CSV catalog
 (`AD_SERVER_TYPE=csv`, `CSV_DATA_DIR=data/csv/samples/aws_workshop`). In that
