@@ -9,6 +9,10 @@ service, agent registry or LLM, and it needs no secrets to boot.
 Everything lives in [`sandbox/`](sandbox/). Nothing in `src/` was changed to
 make it work.
 
+**Hosted version:** the same mock-only sandbox can run publicly on Fly.io at
+<https://iab-seller.agenticape.ai>. See [docs/deploy-fly.md](docs/deploy-fly.md)
+for the step-by-step guide (Windows PowerShell), including Cloudflare DNS.
+
 | You want to... | Windows (PowerShell) | macOS / Linux |
 |---|---|---|
 | Set up and start the seller (one step) | `.\sandbox\run.ps1` | `./sandbox/run.sh` |
@@ -180,7 +184,7 @@ Keys whose label starts with `sandbox-` are revoked by `setup --rekey`.
 | Approval gate | Opt-in gate off. `APPROVAL_REQUIRED_ABOVE_VALUE=250000` holds any proposal worth at least $250k gross for an operator. |
 | LLM / CrewAI | No key. Every scripted scenario is deterministic: `POST /proposals` uses the rule-based evaluator because `PROPOSAL_FLOW_TIME_BUDGET` (20s) is below `PROPOSAL_CREW_MIN_BUDGET` (120s). |
 | Telemetry | CrewAI, OTEL, PostHog and Chroma telemetry are opted out by `ad_seller/_telemetry_shim.py`. CrewAI tracing is off. |
-| Docker | Not used or tested. |
+| Docker | Not used locally. The hosted sandbox image (`infra/fly/Dockerfile`, profile `sandbox/.env.fly`) is covered in [docs/deploy-fly.md](docs/deploy-fly.md). |
 
 Pricing quirks to know about with this catalog:
 
@@ -330,7 +334,8 @@ Also worth knowing:
 ## Pulling upstream updates into this fork
 
 The sandbox only adds `sandbox/`, `SANDBOX.md`, `CLAUDE.md` and three lines to
-`.gitignore`, so upstream merges should be clean.
+`.gitignore`, plus the hosted-sandbox files `fly.toml`, `.dockerignore`,
+`infra/fly/` and `docs/deploy-fly.md`, so upstream merges should be clean.
 
 ```bash
 # once
@@ -351,8 +356,9 @@ GitHub's **Sync fork** button on the fork's page does the same fetch and merge.
 If a scenario starts failing after a merge, that's the point: it caught a
 wire-format or behaviour change. Run it with `--verbose` and compare against
 the upstream changelog. If a setting the sandbox relies on gets renamed
-upstream, update `sandbox/.env.sandbox` and the `PINNED_KEYS` /
-`mock_only_violations()` lists in `sandbox/sandbox_env.py` together.
+upstream, update `sandbox/.env.sandbox`, `sandbox/.env.fly` and the
+`PINNED_KEYS` / `mock_only_violations()` lists in `sandbox/sandbox_env.py`
+together.
 
 ## Continuing development locally with Claude Code
 

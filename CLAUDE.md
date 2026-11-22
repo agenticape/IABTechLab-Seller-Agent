@@ -32,7 +32,8 @@ Local work runs through the mock-only sandbox. See `SANDBOX.md`.
   into code, commits, PRs or logs. Refer to `keys.json` instead.
 - If you add a setting that can reach an external system, add it to
   `PINNED_KEYS` and `mock_only_violations()` in `sandbox/sandbox_env.py` and
-  give it a safe value in `sandbox/.env.sandbox`.
+  give it a safe value in `sandbox/.env.sandbox` and in `sandbox/.env.fly`
+  (the public Fly.io sandbox profile, see `docs/deploy-fly.md`).
 - Don't change core behaviour in `src/` just to make the sandbox work. Fix it
   in `sandbox/`, or document the blocker in `SANDBOX.md`.
 
