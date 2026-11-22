@@ -177,16 +177,18 @@ async def create_quote(
         floor_price=product.floor_cpm,
     )
 
-    # Evaluate target_cpm if provided
-    final_cpm = decision.final_price
+    # A target_cpm is honoured only where the verified buyer's tier allows
+    # it (at/above the waterfall price, or within the negotiation band for
+    # negotiation-enabled tiers), never below the floor; the rationale is
+    # rebuilt around the price actually quoted.
     if request.target_cpm is not None:
-        acceptable, _ = engine.is_price_acceptable(
-            offered_price=request.target_cpm,
-            product_floor=product.floor_cpm,
+        decision = engine.apply_target_price(
+            decision,
+            target_price=request.target_cpm,
             buyer_context=buyer_context,
+            floor_price=product.floor_cpm,
         )
-        if acceptable:
-            final_cpm = request.target_cpm
+    final_cpm = decision.final_price
 
     # Build timestamps
     now = datetime.utcnow()
