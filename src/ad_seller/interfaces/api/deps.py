@@ -74,6 +74,36 @@ async def _require_api_key_record(
     return record
 
 
+async def _buyer_write_api_key_record(
+    record=Depends(_get_optional_api_key_record),
+):
+    """FastAPI dependency for buyer routes that create or change state.
+
+    Requires an API key unless ``ALLOW_ANONYMOUS_BUYER_WRITES`` is set, in
+    which case anonymous callers pass through (as ``None``) and are priced
+    at the PUBLIC tier by the route.
+    """
+    if record is None:
+        from ...config import get_settings
+
+        if not getattr(get_settings(), "allow_anonymous_buyer_writes", False):
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": "authentication_required",
+                    "message": "An API key is required for this request.",
+                },
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    return record
+
+
+def _is_operator(record: Any) -> bool:
+    from ...models.api_key import ApiKeyRole
+
+    return record is not None and getattr(record, "role", None) == ApiKeyRole.OPERATOR
+
+
 def _build_buyer_context(
     buyer_tier: str = "public",
     agency_id: Optional[str] = None,

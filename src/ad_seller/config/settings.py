@@ -253,6 +253,11 @@ class Settings(BaseSettings):
     # are not tracked.
     pg_quote_inventory_hold_enabled: bool = True
 
+    # Buyer write routes (quotes, proposals, negotiation, sessions, orders,
+    # change requests) require a seller-issued API key. Set true to let
+    # anonymous callers use them at the PUBLIC tier, as before.
+    allow_anonymous_buyer_writes: bool = False
+
     # Session Configuration
     session_ttl_seconds: int = 604800  # 7 days
     session_max_messages: int = 200

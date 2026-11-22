@@ -19,6 +19,9 @@ from ad_seller.models.buyer_identity import BuyerIdentity
 from ad_seller.models.core import DealType, PricingModel
 from ad_seller.models.flow_state import ProductDefinition
 
+# The keyless PUBLIC cases use the opt-in anonymous path.
+pytestmark = pytest.mark.usefixtures("anonymous_buyer_writes")
+
 # 35.00 list, 28.00 floor. Tier prices: public 35.00, seat 33.25,
 # agency 31.50, advertiser 29.75. Negotiation band (10%): agency down to
 # 28.35, advertiser down to the 28.00 floor.
