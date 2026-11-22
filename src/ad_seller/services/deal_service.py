@@ -357,7 +357,7 @@ def _pending_booking_payload(quote_id: str, approval_id: str) -> dict[str, Any]:
     }
 
 
-async def book_deal(request: Any) -> dict[str, Any]:
+async def book_deal(request: Any, buyer_context: Any = None) -> dict[str, Any]:
     """Book a deal from a previously issued quote (``DealBookingRequestModel``).
 
     Validates the quote, generates a Deal ID, and returns confirmed terms.
@@ -368,6 +368,9 @@ async def book_deal(request: Any) -> dict[str, Any]:
 
     A booking that the approval gate holds returns a ``pending_approval``
     payload (no deal is minted; see ``_gate_quote_booking``).
+
+    ``buyer_context`` is the booking caller's verified context; its seat IDs
+    and advertiser domains become the deal's OpenRTB ``wseat``/``wadomain``.
     """
     from ..models.quotes import DealBookingResponse, DealBookingStatus, QuoteStatus
     from ..storage.factory import get_storage
@@ -486,7 +489,9 @@ async def book_deal(request: Any) -> dict[str, Any]:
     deal_expires = now + timedelta(days=30)
 
     from ..models.quotes import QuotePricing, QuoteProductInfo, QuoteTerms
-    from .deals_api import build_openrtb_deal_params
+    from .deals_api import build_openrtb_deal_params, verified_deal_allow_lists
+
+    wseat, wadomain = verified_deal_allow_lists(buyer_context)
 
     deal = DealBookingResponse(
         deal_id=deal_id,
@@ -508,6 +513,8 @@ async def book_deal(request: Any) -> dict[str, Any]:
             quote["deal_type"],
             quote["pricing"]["final_cpm"],
             currency=quote["pricing"].get("currency") or "USD",
+            seat_ids=wseat,
+            advertiser_domains=wadomain,
         ),
         created_at=now.isoformat() + "Z",
     )
@@ -749,6 +756,9 @@ async def generate_deal_from_proposal(proposal_id: str, buyer_context: Any) -> d
             },
         )
 
+    from .deals_api import verified_deal_allow_lists
+
+    wseat, wadomain = verified_deal_allow_lists(buyer_context)
     flow = DealGenerationFlow()
     result = flow.generate_deal(
         proposal_id=proposal_id,
@@ -761,6 +771,8 @@ async def generate_deal_from_proposal(proposal_id: str, buyer_context: Any) -> d
             "start_date": proposal.get("start_date"),
             "end_date": proposal.get("end_date"),
             "buyer_id": proposal.get("buyer_id") or "",
+            "wseat": wseat,
+            "wadomain": wadomain,
         },
     )
 
