@@ -274,7 +274,12 @@ async def book_deal(
         existing = await deal_service.get_deal(prior)
         return cm.internal_deal_to_response(existing)
 
-    result = await deal_service.book_deal(internal_request, buyer_context=context)
+    catalog = (
+        await deps.get_product_catalog()
+        if isinstance(quote, dict) and quote.get("deal_type") == "PG"
+        else None
+    )
+    result = await deal_service.book_deal(internal_request, buyer_context=context, catalog=catalog)
     if result.get("status") == "pending_approval":
         # Held by the approval gate: no deal exists yet and nothing is
         # recorded under the idempotency key, so the buyer re-submits the
@@ -486,7 +491,14 @@ async def bulk_deal_operations(
     deals in a single request. Each operation is processed independently
     and returns per-operation success/failure.
     """
-    results = await deal_service.bulk_deal_operations(request.operations)
+    catalog = (
+        await deps.get_product_catalog()
+        if any(op.action == "create" for op in request.operations)
+        else None
+    )
+    results = await deal_service.bulk_deal_operations(
+        request.operations, catalog, disclose_remaining=True
+    )
 
     result_models = [BulkDealOperationResult(**r) for r in results]
     succeeded = sum(1 for r in result_models if r.success)

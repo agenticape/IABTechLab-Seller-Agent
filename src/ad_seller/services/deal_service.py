@@ -501,10 +501,15 @@ async def _apply_accepted_negotiation(
     return quote, negotiation
 
 
-async def book_deal(request: Any, buyer_context: Any = None) -> dict[str, Any]:
+async def book_deal(
+    request: Any,
+    buyer_context: Any = None,
+    catalog: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     """Book a deal from a previously issued quote (``DealBookingRequestModel``).
 
     Validates the quote, generates a Deal ID, and returns confirmed terms.
+    ``catalog`` is used to re-check PG capacity when the quote holds none.
     This is the commit point — the quote becomes bound. When the request
     carries an ``audience_plan``, the plan is validated against seller
     capabilities, frozen onto the deal record as ``audience_plan_snapshot``,
@@ -520,10 +525,14 @@ async def book_deal(request: Any, buyer_context: Any = None) -> dict[str, Any]:
     bookings mint one deal and the rest see the quote booked (409).
     """
     async with _booking_lock(f"quote:{request.quote_id}"):
-        return await _book_quote(request, buyer_context)
+        return await _book_quote(request, buyer_context, catalog)
 
 
-async def _book_quote(request: Any, buyer_context: Any = None) -> dict[str, Any]:
+async def _book_quote(
+    request: Any,
+    buyer_context: Any = None,
+    catalog: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     from ..models.quotes import DealBookingResponse, DealBookingStatus, QuoteStatus
     from ..storage.factory import get_storage
 
@@ -650,14 +659,17 @@ async def _book_quote(request: Any, buyer_context: Any = None) -> dict[str, Any]
             request.quote_id,
         )
 
+    # PG volume is committed (re-checked when the quote holds none) before
+    # anything is persisted, so a 409 leaves the quote bookable later.
+    from .quote_service import commit_pg_hold
+
+    # Booking requires an API key, so the exact remaining volume may be shown.
+    await commit_pg_hold(storage, quote, catalog, disclose_remaining=True)
+
     # Update quote status to "booked" and link deal_id
     quote["status"] = QuoteStatus.BOOKED.value
     quote["deal_id"] = deal_id
     await storage.set_quote(request.quote_id, quote, ttl=86400)
-
-    from .quote_service import commit_pg_hold
-
-    await commit_pg_hold(storage, quote)
 
     # Store the deal in deal storage (coexists with proposal-based deals).
     # The snapshot fields land on the persisted record so
@@ -1146,6 +1158,19 @@ async def create_deal_from_template(
     deal_data["schain"] = _build_seller_schain()
 
     try:
+        if deal_type_str == "PG":
+            from .quote_service import commit_pg_booking
+
+            # Callers are API-keyed (REST) or the operator (MCP).
+            await commit_pg_booking(
+                storage,
+                product,
+                deal_id,
+                request.impressions,
+                flight_start,
+                flight_end,
+                disclose_remaining=True,
+            )
         await storage.set_deal(deal_id, deal_data)
     except Exception:
         if approved is not None:
@@ -1226,14 +1251,22 @@ def _build_seller_schain() -> dict[str, Any]:
 # =============================================================================
 
 
-async def bulk_deal_operations(operations: list[Any]) -> list[dict[str, Any]]:
+async def bulk_deal_operations(
+    operations: list[Any],
+    catalog: Optional[dict[str, Any]] = None,
+    disclose_remaining: bool = False,
+) -> list[dict[str, Any]]:
     """Process a batch of deal operations (create/update/cancel).
 
     Each operation is processed independently; returns per-operation
-    result dicts (index/action/success/deal_id/error).
+    result dicts (index/action/success/deal_id/error). A create commits PG
+    volume through the same ledger as ``book_deal`` (``catalog`` is used to
+    re-check capacity when the quote holds none; the exact remaining volume
+    is reported only when ``disclose_remaining``, for an API-keyed caller).
     """
     from ..models.quotes import DealBookingStatus, QuoteStatus
     from ..storage.factory import get_storage
+    from .quote_service import commit_pg_hold
 
     storage = await get_storage()
     results: list[dict[str, Any]] = []
@@ -1310,6 +1343,19 @@ async def bulk_deal_operations(operations: list[Any]) -> list[dict[str, Any]]:
                         "created_at": now.isoformat() + "Z",
                         "notes": op.notes,
                     }
+                    try:
+                        await commit_pg_hold(storage, quote, catalog, disclose_remaining)
+                    except HTTPException as exc:
+                        detail = exc.detail if isinstance(exc.detail, dict) else {}
+                        results.append(
+                            _result(
+                                i,
+                                "create",
+                                False,
+                                error=f"{detail.get('error')}: {detail.get('message')}",
+                            )
+                        )
+                        continue
                     await storage.set_deal(deal_id, deal_data)
 
                     # Mark quote as booked
