@@ -197,7 +197,7 @@ Currently supported:
 | Gate Name | Flow | When Triggered |
 |-----------|------|---------------|
 | `proposal_decision` | ProposalHandlingFlow | After crew evaluates a buyer proposal and recommends accept/counter/reject. Also gates `POST /api/v1/deals` when the booked quote carries a proposal-led negotiated price |
-| `deal_booking` | `POST /api/v1/deals` | Every quote booking |
+| `deal_booking` | `POST /api/v1/deals`, bulk create, from-template | Every quote or template booking |
 
 Quote booking is also held whenever its gross value (final CPM x
 impressions / 1000) reaches `APPROVAL_REQUIRED_ABOVE_VALUE`, the same
@@ -206,7 +206,38 @@ threshold `POST /proposals` uses. A held booking answers HTTP 202 with
 operator decides (`POST /approvals/{id}/decide`), the buyer re-submits the
 booking: an approval for the same price and impressions books the deal, a
 rejection is a 409 `booking_rejected`, and an approval for different terms
-raises a new request.
+raises a new request. A `deal_booking` approval approves the terms as
+requested: approving it with `modifications` is a 400
+`modifications_not_supported` (the approval stays pending). To change the
+terms, reject it and let the buyer re-quote or negotiate.
+
+A quote whose agreed price came from negotiating a proposal follows that
+proposal's own decision: when an operator rejected the proposal's
+`proposal_decision` approval, booking the quote is a 409 `proposal_rejected`
+and no booking approval is raised (whether or not the booking itself would be
+gated). A pending or approved proposal decision does not book by itself; the
+booking is still gated on its own terms.
+
+Every path that books a deal applies the same gate:
+
+- `POST /api/v1/deals/bulk` and the MCP `bulk_deal_operations` tool, for
+  `create` operations: a held item is reported with `success: false`,
+  `status: pending_approval` and its `approval_id`. Bulk create and
+  `POST /api/v1/deals` share one approval per quote, so an approval raised
+  through either is honoured by both.
+- `POST /api/v1/deals/from-template` and the MCP `create_deal_from_template`
+  tool: a held request answers 202 (the MCP tool returns the same body).
+  The approval is tied to the priced terms (buyer, product, deal type, CPM,
+  impressions and flight dates as sent); re-submitting the same request after
+  approval books one deal, and the approval is then consumed.
+
+Concurrent bookings of one quote (for example several buyer re-submits after
+an approval) mint exactly one deal; the others get a 409
+`quote_already_booked`. Concurrent re-submits of one approved template
+request book once; the others raise a new approval (202). This is enforced
+by a lock inside one seller process. The storage layer has no
+compare-and-set yet, so a deployment running several worker processes
+against shared storage can still double-book under a race.
 
 For `POST /proposals`, the threshold compares the proposal's gross value at
 the higher of the requested price and the list (rate card or catalog base)

@@ -67,7 +67,9 @@ async def generate_deal(
     deal carries the proposal's own terms.
     """
     buyer_context = deps._build_buyer_context(api_key_record=api_key_record)
-    result = await deal_service.generate_deal_from_proposal(request.proposal_id, buyer_context)
+    result = await deal_service.generate_deal_from_proposal(
+        request.proposal_id, buyer_context, api_key_id=api_key_record.key_id
+    )
 
     return DealResponse(
         deal_id=result["deal_id"],
@@ -272,7 +274,12 @@ async def book_deal(
         existing = await deal_service.get_deal(prior)
         return cm.internal_deal_to_response(existing)
 
-    result = await deal_service.book_deal(internal_request, buyer_context=context)
+    catalog = (
+        await deps.get_product_catalog()
+        if isinstance(quote, dict) and quote.get("deal_type") == "PG"
+        else None
+    )
+    result = await deal_service.book_deal(internal_request, buyer_context=context, catalog=catalog)
     if result.get("status") == "pending_approval":
         # Held by the approval gate: no deal exists yet and nothing is
         # recorded under the idempotency key, so the buyer re-submits the
@@ -395,6 +402,10 @@ async def create_deal_from_template(
     against the floor price, and auto-books the deal if acceptable.
 
     Returns 201 with the created deal on success.
+    Returns 202 ``pending_approval`` with an ``approval_id`` when the
+    approval gate holds the booking (same rules as ``POST /api/v1/deals``);
+    nothing is minted, and re-submitting the same request after approval
+    books it. A rejected booking is a 409 ``booking_rejected``.
     Returns 422 when max_cpm is below the seller's floor price, including
     the seller's minimum price in the response.
     Returns 401 for unauthenticated requests.
@@ -435,6 +446,8 @@ async def create_deal_from_template(
     )
 
     deal_data = await deal_service.create_deal_from_template(request, context, catalog)
+    if deal_data.get("status") == "pending_approval":
+        return JSONResponse(status_code=202, content=deal_data)
 
     return DealFromTemplateResponse(
         deal_id=deal_data["deal_id"],
@@ -478,7 +491,14 @@ async def bulk_deal_operations(
     deals in a single request. Each operation is processed independently
     and returns per-operation success/failure.
     """
-    results = await deal_service.bulk_deal_operations(request.operations)
+    catalog = (
+        await deps.get_product_catalog()
+        if any(op.action == "create" for op in request.operations)
+        else None
+    )
+    results = await deal_service.bulk_deal_operations(
+        request.operations, catalog, disclose_remaining=True
+    )
 
     result_models = [BulkDealOperationResult(**r) for r in results]
     succeeded = sum(1 for r in result_models if r.success)

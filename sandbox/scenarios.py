@@ -613,10 +613,15 @@ def scenario_4_negotiation(ctx: Ctx, sc: Scenario) -> None:
             seller is None or seller >= floor,
             f"round {i}: seller price ${seller:.2f} is not below the floor ${floor:.2f}",
         )
-        if offer < floor and action == "counter":
+        if offer < floor:
+            # The capped concession path may land on the floor itself; a
+            # below-floor offer is still countered, never accepted, and the
+            # seller's counters never move back up.
+            previous = last_seller if last_seller is not None else quoted
             sc.check(
-                seller > floor + 0.005,
-                f"round {i}: below-floor offer is countered above the floor (${seller:.2f})",
+                action == "counter" and seller is not None and seller <= previous + 0.005,
+                f"round {i}: below-floor offer is countered, not above the last position "
+                f"(${seller:.2f}, previous ${previous:.2f})",
             )
         sc.check(
             "floor" not in text and "minimum" not in text and not _floor_field_leaks(rnd),

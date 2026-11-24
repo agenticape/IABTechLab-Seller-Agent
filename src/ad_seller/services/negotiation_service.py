@@ -23,11 +23,11 @@ def build_negotiation_engine():
     """Construct the seller's ``NegotiationEngine`` with its standard wiring.
 
     Single source of the engine assembly (default tiered-pricing config +
-    pricing-rules engine + yield optimizer). Both the REST negotiation path
-    (``counter_proposal``) and the chat adapter build the engine here so the
-    negotiation behavior stays identical across surfaces (EP-3.2).
+    pricing-rules engine + yield optimizer). The REST negotiation path
+    (``counter_proposal``), the chat adapter and the proposal flow build the
+    engine here so the negotiation behavior stays identical across surfaces
+    (EP-3.2).
     """
-    from ..config import get_settings
     from ..engines.negotiation_engine import NegotiationEngine
     from ..engines.pricing_rules_engine import PricingRulesEngine
     from ..engines.yield_optimizer import YieldOptimizer
@@ -36,11 +36,7 @@ def build_negotiation_engine():
     config = TieredPricingConfig(seller_organization_id="default")
     pricing_engine = PricingRulesEngine(config)
     yield_opt = YieldOptimizer()
-    return NegotiationEngine(
-        pricing_engine,
-        yield_opt,
-        below_floor_counter_share=get_settings().negotiation_below_floor_counter_share,
-    )
+    return NegotiationEngine(pricing_engine, yield_opt)
 
 
 async def _persist_negotiation(storage: Any, proposal_id: str, data: dict[str, Any]) -> None:
@@ -171,9 +167,15 @@ async def _verify_quote_binding(storage: Any, quote_id: str, buyer_context: Any)
 
 
 async def submit_proposal(
-    request: Any, buyer_context: Any, catalog: dict[str, Any]
+    request: Any,
+    buyer_context: Any,
+    catalog: dict[str, Any],
+    api_key_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Evaluate a submitted proposal.
+
+    ``api_key_id`` is the submitting API key's ``key_id`` (None when
+    keyless); it is stored as the proposal's owner for legacy ``POST /deals``.
 
     Product data now comes from the single cached catalog source (EP-3.3)
     instead of running ProductSetupFlow per request. Returns the response
@@ -231,19 +233,18 @@ async def submit_proposal(
     # surface is reachable cold — without this, POST /api/v1/negotiations/
     # messages 404'd ("Proposal not found") on every fresh negotiation
     # .
-    await storage.set_proposal(
-        proposal_id,
-        {
-            **proposal_data,
-            "proposal_id": proposal_id,
-            "recommendation": result.get("recommendation"),
-            "status": result.get("status"),
-            # Who submitted it: legacy POST /deals only turns a proposal into
-            # a deal for the API key that submitted it.
-            "buyer_key": buyer_context.get_pricing_key(),
-            "buyer_auth": getattr(buyer_context, "authentication_method", None),
-        },
-    )
+    proposal_record = {
+        **proposal_data,
+        "proposal_id": proposal_id,
+        "recommendation": result.get("recommendation"),
+        "status": result.get("status"),
+        # Who submitted it: legacy POST /deals only turns a proposal into
+        # a deal for the API key that submitted it.
+        "buyer_key": buyer_context.get_pricing_key(),
+        "buyer_auth": getattr(buyer_context, "authentication_method", None),
+        "buyer_key_id": api_key_id,
+    }
+    await storage.set_proposal(proposal_id, proposal_record)
     product = catalog["products"].get(request.product_id)
     if product is not None:
         from .catalog_service import serialize_product
@@ -285,6 +286,14 @@ async def submit_proposal(
             flow_state_snapshot=result.get("_flow_state_snapshot", {}),
             proposal_id=proposal_id,
         )
+        # Legacy POST /deals checks this approval before booking, so a pending
+        # or rejected approval wins over a later accepted negotiation.
+        await storage.set_proposal(
+            proposal_id, {**proposal_record, "approval_id": approval_req.approval_id}
+        )
+        from ..storage.base import proposal_approval_key
+
+        await storage.set(proposal_approval_key(proposal_id), approval_req.approval_id)
         return {
             "proposal_id": proposal_id,
             "recommendation": result["recommendation"],

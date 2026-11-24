@@ -151,6 +151,70 @@ async def _media_kit_service():
     return MediaKitService(storage, pricing)
 
 
+def _http_request() -> Any:
+    """The HTTP request behind the current tool call, or None (stdio)."""
+    try:
+        request = mcp.get_context().request_context.request
+    except Exception:
+        return None
+    if request is None or not hasattr(request, "headers"):
+        return None
+    return request
+
+
+def _raw_api_key(request: Any) -> Optional[str]:
+    headers = request.headers
+    raw_key = headers.get("x-api-key")
+    if not raw_key:
+        authorization = headers.get("authorization", "")
+        parts = authorization.split(" ", 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            raw_key = parts[1]
+    return raw_key or None
+
+
+async def _validate_api_key(raw_key: str) -> tuple[Any, Optional[str]]:
+    """Return ``(record, None)`` for a valid key, else ``(None, error JSON)``."""
+    service = await _api_key_service()
+    try:
+        record = await service.validate_key(raw_key)
+    except ValueError as exc:  # revoked or expired
+        return None, _dumps({"error": "invalid_credential", "detail": str(exc)})
+    if record is None:
+        return None, _dumps({"error": "invalid_credential", "detail": "Invalid API key"})
+    return record, None
+
+
+async def _deny_unless_buyer_key() -> Optional[str]:
+    """Enforce API-key auth on buyer write MCP tools over HTTP transports.
+
+    Mirrors ``deps._buyer_write_api_key_record`` on the REST twins: any
+    valid key (buyer or operator) passes; anonymous HTTP callers are
+    denied unless ALLOW_ANONYMOUS_BUYER_WRITES is set. Invalid, revoked or
+    expired keys are always denied. stdio is trusted, as in
+    ``_deny_unless_operator``. Returns None when allowed, otherwise an
+    error JSON string the tool should return as-is.
+    """
+    request = _http_request()
+    if request is None:
+        return None
+
+    raw_key = _raw_api_key(request)
+    if not raw_key:
+        if getattr(_get_settings(), "allow_anonymous_buyer_writes", False):
+            return None
+        return _dumps(
+            {
+                "error": "authentication_required",
+                "detail": "This tool requires an API key. Send it as "
+                "'Authorization: Bearer <key>' or 'X-Api-Key: <key>'.",
+            }
+        )
+
+    _, denied = await _validate_api_key(raw_key)
+    return denied
+
+
 async def _deny_unless_operator() -> Optional[str]:
     """Enforce operator-key auth on admin MCP tools over HTTP transports.
 
@@ -164,21 +228,11 @@ async def _deny_unless_operator() -> Optional[str]:
       a local shell): no HTTP request exists; local process access is
       trusted, same model as the CLI.
     """
-    try:
-        request = mcp.get_context().request_context.request
-    except Exception:
-        request = None
-    if request is None or not hasattr(request, "headers"):
+    request = _http_request()
+    if request is None:
         return None  # stdio / in-process — local operator access
 
-    headers = request.headers
-    raw_key = headers.get("x-api-key")
-    if not raw_key:
-        authorization = headers.get("authorization", "")
-        parts = authorization.split(" ", 1)
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            raw_key = parts[1]
-
+    raw_key = _raw_api_key(request)
     if not raw_key:
         return _dumps(
             {
@@ -191,14 +245,9 @@ async def _deny_unless_operator() -> Optional[str]:
 
     from ..models.api_key import ApiKeyRole
 
-    service = await _api_key_service()
-    try:
-        record = await service.validate_key(raw_key)
-    except ValueError as exc:  # revoked or expired
-        return _dumps({"error": "invalid_credential", "detail": str(exc)})
-
-    if record is None:
-        return _dumps({"error": "invalid_credential", "detail": "Invalid API key"})
+    record, denied = await _validate_api_key(raw_key)
+    if denied:
+        return denied
     if record.role != ApiKeyRole.OPERATOR:
         return _dumps(
             {
@@ -639,6 +688,10 @@ async def get_pricing(product_id: str, buyer_tier: str = "public", volume: int =
 @mcp.tool()
 async def request_quote(product_id: str, deal_type: str = "PD", impressions: int = 0) -> str:
     """Request a non-binding price quote for a product."""
+    denied = await _deny_unless_buyer_key()
+    if denied:
+        return denied
+
     from types import SimpleNamespace
 
     from ..services import quote_service
@@ -694,6 +747,8 @@ async def create_deal_from_template(
         )
     except HTTPException as exc:
         return _dumps({"detail": exc.detail})
+    if deal_data.get("status") == "pending_approval":
+        return _dumps(deal_data)
 
     # Mirror the REST DealFromTemplateResponse projection (single source of I/O).
     return _dumps(
@@ -839,6 +894,10 @@ async def distribute_deal_via_ssp(
 @mcp.tool()
 async def troubleshoot_deal(deal_id: str, ssp_name: str) -> str:
     """Diagnose deal performance issues via SSP diagnostics."""
+    denied = await _deny_unless_operator()
+    if denied:
+        return denied
+
     from ..services import deal_service
 
     return await _service_json(deal_service.troubleshoot_deal_via_ssp(deal_id, ssp_name))
@@ -847,6 +906,10 @@ async def troubleshoot_deal(deal_id: str, ssp_name: str) -> str:
 @mcp.tool()
 async def migrate_deal(old_deal_id: str, reason: str = "", max_cpm: float = 0) -> str:
     """Replace an existing deal with a new one. Creates lineage tracking."""
+    denied = await _deny_unless_operator()
+    if denied:
+        return denied
+
     from types import SimpleNamespace
 
     from ..services import deal_service
@@ -869,6 +932,10 @@ async def migrate_deal(old_deal_id: str, reason: str = "", max_cpm: float = 0) -
 @mcp.tool()
 async def deprecate_deal(deal_id: str, reason: str, replacement_deal_id: str = "") -> str:
     """Mark a deal as deprecated with reason and optional replacement."""
+    denied = await _deny_unless_operator()
+    if denied:
+        return denied
+
     from types import SimpleNamespace
 
     from ..services import deal_service
@@ -900,6 +967,10 @@ async def export_deals(format: str = "generic", status: str = "") -> str:
 async def bulk_deal_operations(operations: str) -> str:
     """Process multiple deal operations in one batch.
     Pass operations as JSON array: [{"action":"create","quote_id":"..."}, ...]"""
+    denied = await _deny_unless_operator()
+    if denied:
+        return denied
+
     from types import SimpleNamespace
 
     from ..services import deal_service
@@ -915,7 +986,8 @@ async def bulk_deal_operations(operations: str) -> str:
         )
         for o in parsed
     ]
-    results = await deal_service.bulk_deal_operations(ops)
+    catalog = await _static_catalog() if any(op.action == "create" for op in ops) else None
+    results = await deal_service.bulk_deal_operations(ops, catalog)
     succeeded = sum(1 for r in results if r["success"])
     return _dumps(
         {
@@ -941,6 +1013,10 @@ async def create_order(deal_id: str = "", quote_id: str = "", metadata: str = ""
     ``metadata`` is optional, passed as a JSON object string
     (e.g. '{"campaign": "spring-2026"}').
     """
+    denied = await _deny_unless_buyer_key()
+    if denied:
+        return denied
+
     from ..services import order_service
 
     parsed_metadata = json.loads(metadata) if metadata else None
@@ -1195,6 +1271,10 @@ async def create_curated_deal(
     Pass buyer_seat_ids as a comma-separated list to attach DSP-facing seat
     IDs at creation time — needed for SSPs that resolve dspID from a seat
     (e.g. Index Exchange) later, via distribute_deal_via_ssp."""
+    denied = await _deny_unless_operator()
+    if denied:
+        return denied
+
     from types import SimpleNamespace
 
     from ..services import deal_service

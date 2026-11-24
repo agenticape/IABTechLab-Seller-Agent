@@ -216,13 +216,6 @@ class Settings(BaseSettings):
     min_deal_value: float = 1000.0
     default_price_floor_cpm: float = 10.0
 
-    # Negotiation: share (0-1) of the gap between the product floor and the
-    # seller's last position that the seller keeps when countering a
-    # below-floor offer. Unset uses each strategy's own share
-    # (1 - gap_split_buyer_share), so the counter never lands exactly on
-    # the floor; 0 counters at the floor (the previous behaviour).
-    negotiation_below_floor_counter_share: Optional[float] = Field(default=None, ge=0, le=1)
-
     # Yield Optimization
     yield_optimization_enabled: bool = True
     programmatic_floor_multiplier: float = 1.2
@@ -247,11 +240,19 @@ class Settings(BaseSettings):
     approval_required_above_value: float = 0.0
 
     # Programmatic Guaranteed quotes hold their impressions against a
-    # capacity-capped product (maximum_impressions) for the quote TTL, and
-    # booked PG volume stays held until the flight ends, so the same
+    # capacity-capped product (maximum_impressions), and booked PG volume
+    # stays held until the flight ends, so the same
     # guaranteed capacity cannot be quoted twice. Products without a cap
     # are not tracked.
     pg_quote_inventory_hold_enabled: bool = True
+    # Only API-keyed buyers' PG quotes hold capacity; anonymous quotes are
+    # checked but hold nothing. A hold lapses after this many seconds even
+    # though the quote stays bookable for its 24 h TTL; booking a quote whose
+    # hold lapsed re-checks capacity. Capped at the quote TTL.
+    pg_hold_ttl_seconds: int = Field(default=3600, gt=0, le=86400)
+    # Largest fraction of a product's maximum_impressions that one buyer
+    # (API key) may hold in outstanding PG quotes at once.
+    pg_hold_max_buyer_share: float = Field(default=0.5, gt=0.0, le=1.0)
 
     # Fetching a buyer-supplied agent_url's /.well-known/agent.json: https
     # only, public addresses only (no loopback/private/link-local), no
@@ -260,8 +261,8 @@ class Settings(BaseSettings):
     agent_card_fetch_allow_private_networks: bool = False
 
     # Buyer write routes (quotes, proposals, negotiation, sessions, orders,
-    # change requests) require a seller-issued API key. Set true to let
-    # anonymous callers use them at the PUBLIC tier, as before.
+    # change requests, and their MCP tools) require a seller-issued API key.
+    # Set true to let anonymous callers use them again, as before.
     allow_anonymous_buyer_writes: bool = False
 
     # Session Configuration
