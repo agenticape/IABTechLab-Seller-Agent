@@ -297,10 +297,9 @@ on a Linux VM (scenario 6 not run) gave:
 
 INFO-level observations:
 
-- A below-floor offer is countered above the floor, at
-  `NEGOTIATION_BELOW_FLOOR_COUNTER_SHARE` of the way back to the seller's last
-  position (default: the tier strategy's own share); `0` restores the old
-  counter at the floor.
+- A below-floor offer gets the normal capped counter from the seller's last
+  position, clamped at the floor, so a lowball is countered like an honest
+  near-floor offer and the floor shows only once the capped path reaches it.
 - Seat-tier keys can negotiate too; the endpoint doesn't apply
   `BuyerContext.eligible_for_negotiation`.
 - PG soft holds apply only to products with a declared `maximum_impressions`.
