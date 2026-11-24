@@ -253,8 +253,8 @@ class Settings(BaseSettings):
     agent_card_fetch_allow_private_networks: bool = False
 
     # Buyer write routes (quotes, proposals, negotiation, sessions, orders,
-    # change requests) require a seller-issued API key. Set true to let
-    # anonymous callers use them at the PUBLIC tier, as before.
+    # change requests, and their MCP tools) require a seller-issued API key.
+    # Set true to let anonymous callers use them again, as before.
     allow_anonymous_buyer_writes: bool = False
 
     # Session Configuration

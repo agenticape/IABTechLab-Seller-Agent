@@ -97,7 +97,7 @@ class TestSessionTierVerification:
     async def test_keyless_identity_claim_creates_public_session(self, client_factory):
         captured = {}
 
-        async def _fake_create_session(buyer_context):
+        async def _fake_create_session(buyer_context, owner_key_id=None):
             captured["ctx"] = buyer_context
             return {"session_id": "s-1"}
 
@@ -117,7 +117,7 @@ class TestSessionTierVerification:
     async def test_keyed_session_keeps_key_tier(self, client_factory):
         captured = {}
 
-        async def _fake_create_session(buyer_context):
+        async def _fake_create_session(buyer_context, owner_key_id=None):
             captured["ctx"] = buyer_context
             return {"session_id": "s-2"}
 
