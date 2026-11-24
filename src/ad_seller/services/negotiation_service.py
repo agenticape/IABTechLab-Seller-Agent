@@ -291,6 +291,9 @@ async def submit_proposal(
         await storage.set_proposal(
             proposal_id, {**proposal_record, "approval_id": approval_req.approval_id}
         )
+        from ..storage.base import proposal_approval_key
+
+        await storage.set(proposal_approval_key(proposal_id), approval_req.approval_id)
         return {
             "proposal_id": proposal_id,
             "recommendation": result["recommendation"],
