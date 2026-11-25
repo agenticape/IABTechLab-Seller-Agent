@@ -237,7 +237,9 @@
     .sheet-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0;
       z-index: 1; background: var(--bg); padding: 8px 0; }
     .sheet-head button { min-width: 44px; min-height: 44px; }
-    body.sheet-open #sheet-scrim { display: block; position: fixed; inset: 0; z-index: 7; background: rgba(0, 0, 0, .45); }
+    body.sheet-open main { z-index: 9; }
+    body.sheet-open #sheet-scrim { display: block; position: fixed; inset: 0; z-index: 7; pointer-events: auto;
+      background: rgba(0, 0, 0, .45); }
     body.mode-3d .calls, body.mode-3d .notes, .notes { max-height: none; }
     .compact-only, #playbar .compact-only { display: inline-flex; }
     #playbar { left: 50%; bottom: calc(8px + var(--sab)); gap: 4px; padding: 9px 6px 6px; }
@@ -367,8 +369,8 @@
     <div class="panel"><h2>Deals &amp; approvals</h2><div id="cards"><div class="sub">Booked deals and approval holds appear here.</div></div></div>
     <div class="panel"><h2>Notes</h2><ul class="notes" id="notes"></ul></div>
   </aside>
+  <div id="sheet-scrim"></div>
 </main>
-<div id="sheet-scrim"></div>
 <div id="advance-hint" hidden>Click anywhere to continue</div>
 <div id="playbar" role="toolbar" aria-label="Playback">
   <div id="countdown" aria-hidden="true"><span></span></div>
