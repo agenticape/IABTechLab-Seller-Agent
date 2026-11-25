@@ -142,5 +142,7 @@ Plain env (in `fly.toml` `[env]`; change there and redeploy):
 
 ## Updating
 
-Pull `demo/buyer-demo`, then run the same `fly deploy` command. Rotating a
+Pull `demo/buyer-demo`, then run the same `fly deploy` command. The image
+copies `static/` (vendored three.js and the 3D scene) next to `ui.html`, so
+use the Dockerfile from the branch. Rotating a
 seller key is `fly secrets set ...` again; Fly restarts the machine.

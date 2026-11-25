@@ -41,17 +41,30 @@ uv run python buyer_demo.py --ui            # opens http://127.0.0.1:8765/
 ```
 
 A local page shows the buyer agent on the left and the seller agent on the
-right. Each HTTP call becomes a pair of speech bubbles in plain words ("Can I
+right. By default they stand on a small blocky 3D island: the buyer in a blue
+suit with a briefcase, the seller behind a market stall. A glowing packet arcs
+between them for each call, booked deals pop onto the stall as gold blocks,
+approval holds appear as padlock blocks, and a refused call gets crossed arms
+and a red X. Drag to turn the camera and scroll to zoom. The **View** button
+switches to the flat 2D chat view, and the page remembers your choice.
+Browsers without WebGL get the flat view automatically.
+
+Each HTTP call becomes a pair of speech bubbles in plain words ("Can I
 get Apex NBA as an advertiser? 8M imps, Apr 2027" / "Held for approval:
 $353,600 is over the $250k gate"), coloured green (agreed), amber (counter or
 held for approval) or red (refused). Under each reply are the method, path,
 status and latency, plus a click-to-expand of the raw request and response.
 A side panel shows deal and approval cards and the running notes. Pick a
 scenario, set the pause between steps (0 to 3 s), and press **Run**. The page
-is plain HTML with no CDN, so it works offline. Keys never reach the browser.
+is plain HTML with no CDN and no build step, so it works offline: three.js r170
+is vendored as one file in `static/` (MIT, licence header kept), and all the
+block and character textures are drawn procedurally in the browser. Keys never
+reach the browser.
 The `runs/` logs are written exactly as for the CLI.
 
-![Buyer demo UI: booking scenario against a local sandbox seller](docs/ui-booking.png)
+![Buyer demo UI, blocky 3D view: booking scenario against a local sandbox seller](docs/ui-3d.png)
+
+![Buyer demo UI, flat view: the same booking scenario](docs/ui-booking.png)
 
 The same page is hosted for anyone at <https://iab-buyer.agenticape.ai>
 (`--serve` mode, with a per-visitor rate limit and a run queue). See

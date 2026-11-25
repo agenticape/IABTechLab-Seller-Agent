@@ -174,8 +174,14 @@ help and exits.
 
 ## Watch it in the browser (`--ui`)
 
-The same scenarios, shown as a buyer agent and a seller agent talking. Each
-call is a pair of plain-language speech bubbles (green agreed, amber counter
+The same scenarios, shown as a buyer agent and a seller agent talking. The
+default is a blocky 3D view: two box-built characters on a voxel island, a
+glowing packet arcing between them for each call, gold deal blocks on the
+seller's stall, padlock blocks for approval holds and a red X for refusals.
+Drag to turn the camera, scroll to zoom. **View** switches to the flat 2D
+view (remembered in the browser). Without WebGL the flat view is used
+automatically, and with "reduce motion" set in the OS the scene stays still.
+In both views each call is a pair of plain-language speech bubbles (green agreed, amber counter
 or held for approval, red refused), with method, path, status and latency
 underneath and the raw request/response one click away. A side panel shows
 deal and approval cards and the running notes.
@@ -216,7 +222,8 @@ the PowerShell window. Options: `--port 9000` for another port,
 `--no-browser` to only print the URL.
 
 The page is served from your machine only (127.0.0.1) and works offline: no
-CDN, no build step. API keys stay in the Python process; the browser only
+CDN, no build step. three.js is vendored as `static/three.module.min.js`, and
+only the files listed in `demo_ui.STATIC_FILES` are served under `/static/`. API keys stay in the Python process; the browser only
 sees `***REDACTED***` and which tiers have a key. Every run still writes the
 `runs/` markdown and JSON logs, exactly as the CLI does, and the terminal
 shows the usual CLI lines as the run goes.
