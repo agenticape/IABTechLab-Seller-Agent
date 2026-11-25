@@ -473,7 +473,7 @@ function buildStall(scene, tex) {
 // The view
 // ---------------------------------------------------------------------------
 
-export function createVoxelView({ container, labels, getInsets, reducedMotion }) {
+export function createVoxelView({ container, labels, getInsets, reducedMotion, isCompact }) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "low-power" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   container.prepend(renderer.domElement);
@@ -579,8 +579,8 @@ export function createVoxelView({ container, labels, getInsets, reducedMotion })
   function bubble(side, text, tone, meta) {
     const anchor =
       side === "buyer"
-        ? new THREE.Vector3(BUYER_X + 0.6, GROUND + 3.0, 0)
-        : new THREE.Vector3(SELLER_X - 0.6, GROUND + 3.0, 0);
+        ? new THREE.Vector3(BUYER_X + 0.6, GROUND + 3.4, 0)
+        : new THREE.Vector3(SELLER_X - 0.6, GROUND + 3.4, 0);
     const entry = label("bubble3d " + side + (tone ? " tone-" + tone : ""), anchor);
     const line = document.createElement("div");
     line.textContent = text;
@@ -609,43 +609,78 @@ export function createVoxelView({ container, labels, getInsets, reducedMotion })
   // ---- camera ------------------------------------------------------------
   const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 200);
   const target = new THREE.Vector3(0, 1.0, 0.4);
-  const orbit = { az: -0.12, el: 0.48, radius: 27, drift: 0, lastInput: -10 };
-  const LIMITS = { az: [-0.95, 0.95], el: [0.25, 1.0], radius: [14, 42] };
+  // radius = fit (distance that frames both agents in the visible area) * zoom
+  const orbit = { az: -0.12, el: 0.48, fit: 27, zoom: 1, drift: 0, lastInput: -10 };
+  const LIMITS = { az: [-0.95, 0.95], el: [0.25, 1.0], zoom: [0.55, 1.6] };
   const clamp = (v, [a, b]) => Math.min(b, Math.max(a, v));
 
+  // One pointer rotates, two pointers pinch-zoom.
+  const pointers = new Map();
   let dragging = null;
+  let pinch = null;
   const canvas = renderer.domElement;
+  const spread = () => {
+    const [a, b] = [...pointers.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y) || 1;
+  };
   canvas.addEventListener("pointerdown", (e) => {
-    dragging = { x: e.clientX, y: e.clientY };
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     canvas.setPointerCapture(e.pointerId);
+    if (pointers.size === 2) {
+      dragging = null;
+      pinch = { d: spread(), zoom: orbit.zoom };
+    } else if (pointers.size === 1) {
+      dragging = { x: e.clientX, y: e.clientY };
+    }
   });
   canvas.addEventListener("pointermove", (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && pointers.size >= 2) {
+      orbit.zoom = clamp((pinch.zoom * pinch.d) / spread(), LIMITS.zoom);
+      orbit.lastInput = clock.getElapsedTime();
+      return;
+    }
     if (!dragging) return;
     orbit.az = clamp(orbit.az - (e.clientX - dragging.x) * 0.004, LIMITS.az);
     orbit.el = clamp(orbit.el + (e.clientY - dragging.y) * 0.003, LIMITS.el);
     dragging = { x: e.clientX, y: e.clientY };
     orbit.lastInput = clock.getElapsedTime();
   });
-  const endDrag = () => (dragging = null);
-  canvas.addEventListener("pointerup", endDrag);
-  canvas.addEventListener("pointercancel", endDrag);
+  const endPointer = (e) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinch = null;
+    const rest = [...pointers.values()][0];
+    dragging = rest ? { x: rest.x, y: rest.y } : null;
+  };
+  canvas.addEventListener("pointerup", endPointer);
+  canvas.addEventListener("pointercancel", endPointer);
   canvas.addEventListener(
     "wheel",
     (e) => {
       e.preventDefault();
-      orbit.radius = clamp(orbit.radius * (1 + Math.sign(e.deltaY) * 0.08), LIMITS.radius);
+      orbit.zoom = clamp(orbit.zoom * (1 + Math.sign(e.deltaY) * 0.08), LIMITS.zoom);
       orbit.lastInput = clock.getElapsedTime();
     },
     { passive: false },
   );
 
+  let inset = { top: 0, right: 0, bottom: 0 };
   function resize() {
     const w = container.clientWidth || window.innerWidth;
     const h = container.clientHeight || window.innerHeight;
     renderer.setSize(w, h, false);
+    inset = { top: 0, right: 0, bottom: 0, ...(getInsets ? getInsets() : {}) };
+    const regionW = Math.max(1, w - inset.right);
+    const regionH = Math.max(1, h - inset.top - inset.bottom);
+    const aspect = regionW / regionH;
+    // Portrait phones get a wider lens so both agents stay in frame.
+    camera.fov = aspect < 1 ? 42 : 32;
     camera.aspect = w / h;
-    const inset = getInsets ? getInsets() : { top: 0, right: 0 };
-    camera.setViewOffset(w, h, inset.right / 2, -(inset.top - (inset.bottom || 0)) / 2, w, h);
+    const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const regionTan = tanHalf * (regionH / h);
+    orbit.fit = Math.max(18, (aspect < 1 ? 9 : 7.2) / (regionTan * aspect), 5.6 / regionTan);
+    camera.setViewOffset(w, h, inset.right / 2, -(inset.top - inset.bottom) / 2, w, h);
     camera.updateProjectionMatrix();
   }
   window.addEventListener("resize", resize);
@@ -693,10 +728,11 @@ export function createVoxelView({ container, labels, getInsets, reducedMotion })
     if (!reducedMotion && t - orbit.lastInput > 4) orbit.drift = Math.sin(t * 0.07) * 0.12;
     else orbit.drift *= 0.95;
     const az = orbit.az + orbit.drift;
+    const radius = orbit.fit * orbit.zoom;
     camera.position.set(
-      target.x + orbit.radius * Math.cos(orbit.el) * Math.sin(az),
-      target.y + orbit.radius * Math.sin(orbit.el),
-      target.z + orbit.radius * Math.cos(orbit.el) * Math.cos(az),
+      target.x + radius * Math.cos(orbit.el) * Math.sin(az),
+      target.y + radius * Math.sin(orbit.el),
+      target.z + radius * Math.cos(orbit.el) * Math.cos(az),
     );
     camera.lookAt(target);
 
@@ -759,17 +795,36 @@ export function createVoxelView({ container, labels, getInsets, reducedMotion })
   function placeLabels() {
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
-    for (const entry of tracked) {
+    const pad = 6;
+    const box = {
+      left: pad,
+      right: w - inset.right - pad,
+      top: inset.top + pad,
+      bottom: h - inset.bottom - pad,
+    };
+    // Read every size first, then write, to avoid forcing layout per label.
+    const placed = tracked.map((entry) => {
       v.copy(entry.anchor).project(camera);
-      if (v.z > 1 || v.z < -1) {
+      if (v.z > 1 || v.z < -1) return null;
+      let x = (v.x * 0.5 + 0.5) * w;
+      let y = (-v.y * 0.5 + 0.5) * h;
+      const bw = entry.el.offsetWidth;
+      x = Math.min(Math.max(x, box.left + bw / 2), Math.max(box.left + bw / 2, box.right - bw / 2));
+      if (entry.el.classList.contains("bubble3d")) {
+        const bh = entry.el.offsetHeight;
+        y = Math.min(Math.max(y, box.top + bh), Math.max(box.top + bh, box.bottom));
+      }
+      return { x, y };
+    });
+    tracked.forEach((entry, i) => {
+      const p = placed[i];
+      if (!p) {
         entry.el.style.display = "none";
-        continue;
+        return;
       }
       entry.el.style.display = "";
-      const x = (v.x * 0.5 + 0.5) * w;
-      const y = (-v.y * 0.5 + 0.5) * h;
-      entry.el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0) translate(-50%, -100%)`;
-    }
+      entry.el.style.transform = `translate3d(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px, 0) translate(-50%, -100%)`;
+    });
   }
 
   // ---- events -------------------------------------------------------------
@@ -803,6 +858,10 @@ export function createVoxelView({ container, labels, getInsets, reducedMotion })
     seller.talkUntil = t + 0.9;
     const tone = ev.tone || "ok";
     dropLabel(sellerBubble);
+    if (isCompact && isCompact()) {
+      dropLabel(buyerBubble);
+      buyerBubble = null;
+    }
     sellerBubble = bubble(
       "seller",
       ev.reply || String(ev.status_code),
@@ -939,6 +998,25 @@ export function createVoxelView({ container, labels, getInsets, reducedMotion })
     seller.thinkUntil = 0;
   }
 
+  // Snap every running animation to its end state (used when skipping ahead).
+  function finish() {
+    const t = clock.getElapsedTime();
+    if (flight.phase === "out") flight.phase = "wait";
+    if (flight.phase === "back") {
+      flight.phase = "idle";
+      packet.visible = false;
+    }
+    if (flight.phase === "wait") packet.position.copy(toSeller);
+    for (const p of pops) p.mesh.scale.setScalar(1);
+    pops.length = 0;
+    for (const c of crosses) scene.remove(c.sprite);
+    crosses.length = 0;
+    for (const ch of [buyer, seller]) {
+      ch.talkUntil = Math.min(ch.talkUntil, t);
+      ch.refuseUntil = Math.min(ch.refuseUntil, t);
+    }
+  }
+
   function setActive(on) {
     if (on === running) return;
     running = on;
@@ -950,5 +1028,5 @@ export function createVoxelView({ container, labels, getInsets, reducedMotion })
     }
   }
 
-  return { onEvent, clear, setActive, resize };
+  return { onEvent, clear, finish, setActive, resize };
 }
