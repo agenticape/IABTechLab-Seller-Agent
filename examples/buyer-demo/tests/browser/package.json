@@ -1,0 +1,11 @@
+{
+  "name": "buyer-demo-browser-checks",
+  "private": true,
+  "description": "Headless checks for the buyer demo UI (fake seller, no network)",
+  "scripts": {
+    "check": "node check_playback.js"
+  },
+  "devDependencies": {
+    "playwright": "1.65.1"
+  }
+}
