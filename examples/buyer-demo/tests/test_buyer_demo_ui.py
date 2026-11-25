@@ -416,3 +416,42 @@ def test_config_exposes_key_presence_not_values(tmp_runs):
         assert json.loads(body)["keys"] == {"advertiser": True, "agency": False, "seat": False}
     finally:
         srv.close()
+
+
+# ---------------------------------------------------------------------------
+# Static assets and offline page
+# ---------------------------------------------------------------------------
+
+
+def test_vendored_three_is_served_as_javascript(tmp_runs):
+    srv = Server(demo_ui.Settings(hosted=True))
+    try:
+        status, headers, body = srv.request("GET", "/static/three.module.min.js")
+        assert status == 200
+        assert headers["Content-Type"].startswith("text/javascript")
+        assert body.startswith("/**\n * @license") and "SPDX-License-Identifier: MIT" in body[:200]
+        assert srv.request("GET", "/static/../demo_ui.py")[0] == 404
+        assert srv.request("GET", "/static/keys.json")[0] == 404
+    finally:
+        srv.close()
+
+
+def test_static_files_need_the_password_too(tmp_runs):
+    srv = Server(demo_ui.Settings(hosted=True, password="s3cret-demo"))
+    try:
+        assert srv.request("GET", "/static/three.module.min.js")[0] == 401
+    finally:
+        srv.close()
+
+
+def test_page_references_no_external_urls():
+    import re
+
+    root = Path(__file__).resolve().parents[1]
+    for name in ("ui.html", "static/voxel_scene.js"):
+        path = root / name
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        assert not re.search(r"(?i)\b(?:https?:)?//[a-z0-9.-]+\.[a-z]{2,}", text), name
+        assert not re.search(r"(?i)\b(?:src|href)\s*=\s*[\"']?(?:https?:|//)", text), name

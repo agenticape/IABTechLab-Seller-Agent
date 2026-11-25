@@ -39,6 +39,13 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
 PAGE = ROOT / "ui.html"
+STATIC_DIR = ROOT / "static"
+# Only these files are served from /static/ (no directory listing, no traversal).
+STATIC_FILES = {
+    "three.module.min.js": "text/javascript; charset=utf-8",
+    "voxel_scene.js": "text/javascript; charset=utf-8",
+    "three.LICENSE": "text/plain; charset=utf-8",
+}
 
 PACE_MIN = 0.0
 PACE_MAX = 3.0
@@ -458,8 +465,8 @@ def make_handler(app: DemoApp) -> type[BaseHTTPRequestHandler]:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            for key, value in {**SECURITY_HEADERS, **(headers or {})}.items():
+            merged = {"Cache-Control": "no-store", **SECURITY_HEADERS, **(headers or {})}
+            for key, value in merged.items():
                 self.send_header(key, value)
             self.end_headers()
             if self.command != "HEAD":
@@ -553,6 +560,18 @@ def make_handler(app: DemoApp) -> type[BaseHTTPRequestHandler]:
                 return
             if path == "/":
                 self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
+            elif path.startswith("/static/"):
+                name = path[len("/static/") :]
+                ctype = STATIC_FILES.get(name)
+                if ctype is None or not (STATIC_DIR / name).is_file():
+                    self._json(404, {"error": "not_found"})
+                    return
+                self._send(
+                    200,
+                    (STATIC_DIR / name).read_bytes(),
+                    ctype,
+                    {"Cache-Control": "public, max-age=3600"},
+                )
             elif path == "/api/config":
                 self._json(200, app.config())
             elif path == "/api/live/events":

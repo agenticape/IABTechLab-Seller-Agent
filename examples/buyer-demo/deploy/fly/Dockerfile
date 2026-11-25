@@ -18,6 +18,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project --python /usr/local/bin/python3
 
 COPY buyer_demo.py demo_ui.py narration.py ui.html ./
+COPY static ./static
 
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin demo \
     && mkdir -p /app/runs \
