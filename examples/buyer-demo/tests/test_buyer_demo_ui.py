@@ -472,3 +472,20 @@ def test_voxel_scene_is_served_and_imports_only_vendored_three(tmp_runs):
         assert "buyerDemoView" in page and "webglAvailable" in page
     finally:
         srv.close()
+
+
+def test_server_runs_at_full_speed_by_default(tmp_runs):
+    srv = Server(demo_ui.Settings(hosted=True))
+    try:
+        config = json.loads(srv.request("GET", "/api/config")[2])
+        assert config["pace"]["default"] == 0
+        status, _, body = srv.request("POST", "/api/runs", {"scenario": "booking"})
+        assert status == 202
+        run = srv.app.get(json.loads(body)["run_id"])
+        assert run.pace == 0
+        assert demo_ui._clamp_pace("nonsense") == 0
+        assert demo_ui._clamp_pace(99) == demo_ui.PACE_MAX
+        assert srv.request("POST", f"/api/runs/{run.run_id}/pace", {"pace": 1.5})[0] == 200
+        assert run.pace == 1.5
+    finally:
+        srv.close()

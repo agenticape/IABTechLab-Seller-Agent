@@ -49,7 +49,7 @@ STATIC_FILES = {
 
 PACE_MIN = 0.0
 PACE_MAX = 3.0
-PACE_DEFAULT = 1.2
+PACE_DEFAULT = 0.0  # the browser paces playback; the server runs at full speed
 MAX_BODY = 1024
 SSE_PING_SECONDS = 15
 RUN_RETENTION_SECONDS = 15 * 60
