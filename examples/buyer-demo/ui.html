@@ -111,9 +111,66 @@
   .notes .k.INFO { background: #22304d; color: #a9c1ff; } .notes .k.NOTE { background: #3b2d10; color: #ffd27a; }
   .notes .k.RUN { background: #1f3a2b; color: #a8ecc6; }
   footer { color: var(--muted); font-size: 12px; padding: 0 18px 18px; }
+  .calls-panel, #scene3d, .scene-hint { display: none; }
+  .calls { list-style: none; padding: 0; margin: 0; font-size: 12.5px; }
+  .calls li { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+  .calls .tag { font: 10px var(--mono); font-weight: 700; padding: 1px 5px; border-radius: 4px; margin-right: 6px; }
+  .calls .ok .tag { background: var(--ok-bg); color: var(--ok); }
+  .calls .counter .tag, .calls .pending .tag { background: var(--amber-bg); color: var(--amber); }
+  .calls .refused .tag { background: var(--red-bg); color: var(--red); }
+  .calls .meta { margin-top: 2px; }
+
+  /* Blocky 3D view: the scene fills the window, the page becomes an overlay. */
+  html.mode-3d, body.mode-3d { height: 100%; overflow: hidden; }
+  body.mode-3d #scene3d { display: block; position: fixed; inset: 0; z-index: 0; background: #9fd3ff; }
+  #scene3d canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  #scene3d canvas:active { cursor: grabbing; }
+  #labels3d { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  body.mode-3d #topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 4;
+    background: rgba(15, 20, 32, .80); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
+  body.mode-3d #topbar .controls, body.mode-3d #topbar details.explain { background: rgba(23, 30, 46, .85); }
+  body.mode-3d .controls { margin-bottom: 10px; }
+  body.mode-3d main { position: fixed; z-index: 3; top: var(--top-h, 200px); right: 0; bottom: 0; width: 370px;
+    display: block; padding: 12px 14px 14px 0; overflow-y: auto; }
+  body.mode-3d .stage { display: none; }
+  body.mode-3d aside .panel { background: rgba(23, 30, 46, .90); backdrop-filter: blur(6px); }
+  body.mode-3d .calls-panel { display: block; }
+  body.mode-3d .calls { max-height: 34vh; overflow-y: auto; }
+  body.mode-3d .notes { max-height: 22vh; }
+  body.mode-3d footer, body.mode-3d .scene-hint { position: fixed; z-index: 2; left: 12px; padding: 2px 8px;
+    border-radius: 6px; background: rgba(15, 20, 32, .72); color: #c9d2e3; font-size: 11.5px; }
+  body.mode-3d footer { bottom: 8px; }
+  body.mode-3d .scene-hint { display: block; bottom: 34px; }
+  @media (max-width: 900px) {
+    body.mode-3d main { top: auto; left: 0; width: auto; height: 40vh; padding: 8px; }
+  }
+  .label3d { position: absolute; left: 0; top: 0; will-change: transform; white-space: nowrap;
+    font-size: 12px; line-height: 1.35; }
+  .label3d.nametag { background: rgba(0, 0, 0, .55); color: #fff; padding: 1px 7px; border-radius: 3px;
+    font: 600 12px var(--mono); }
+  .label3d.bubble3d { white-space: normal; width: max-content; max-width: 250px; margin-top: -26px;
+    background: rgba(15, 20, 32, .92); color: var(--text); border: 2px solid #4f8cff; border-radius: 6px;
+    padding: 7px 10px; box-shadow: 0 3px 0 rgba(0, 0, 0, .25); animation: pop .18s ease-out; }
+  .label3d.bubble3d.tone-ok { border-color: var(--ok); }
+  .label3d.bubble3d.tone-counter, .label3d.bubble3d.tone-pending { border-color: var(--amber); }
+  .label3d.bubble3d.tone-refused { border-color: var(--red); }
+  .label3d .meta3d { font: 10.5px var(--mono); color: var(--muted); margin-top: 3px; }
+  .label3d.pricetag { font: 700 11px var(--mono); padding: 1px 6px; border-radius: 3px; border: 1px solid; }
+  .label3d.pricetag.bid { background: #1b2c52; color: #bcd3ff; border-color: #4f8cff; }
+  .label3d.pricetag.ask { background: var(--amber-bg); color: #ffd27a; border-color: var(--amber); }
+  .label3d.pricetag.quote { background: #f4f4f4; color: #222; border-color: #999; }
+  .label3d.itemtag { font: 700 11px var(--mono); padding: 1px 6px; border-radius: 3px; }
+  .label3d.itemtag.deal { background: #3a2f05; color: #ffe27a; border: 1px solid #f4c430; }
+  .label3d.itemtag.lock { background: var(--red-bg); color: #ffd0a0; border: 1px solid var(--amber); }
+  @media (prefers-reduced-motion: reduce) {
+    .bubble, .card, .label3d.bubble3d { animation: none; }
+    .lane.flying .packet { animation: none; left: 45%; }
+  }
 </style>
 </head>
 <body>
+<div id="scene3d" aria-hidden="true"><div id="labels3d"></div></div>
+<div id="topbar">
 <div class="banner">
   Sandbox demo · mock inventory · mock buyers.
   <small>Nothing here is real media or real spend. Each run creates fictional quotes, negotiations,
@@ -134,6 +191,8 @@
     <li>Green means the seller agreed, amber means it countered or held the request for a human,
       red means it refused (for example, writes with no API key). Click <i>details</i> for the raw JSON.</li>
     <li>Bookings over $250,000 are held for human approval (HTTP 202). This page never approves them.</li>
+    <li>In the blocky 3D view, drag to turn the camera and scroll to zoom. Booked deals appear as gold
+      blocks on the stall and approval holds as padlock blocks. The <i>View</i> button switches to the flat view.</li>
   </ul>
 </details>
 <div class="controls">
@@ -146,7 +205,9 @@
   <button id="clear">Clear</button>
   <label id="live-wrap" hidden><input id="live" type="checkbox"> Watch live feed (everyone's runs)</label>
   <span id="status" class="pill">Idle</span>
+  <button id="view-toggle" title="Switch between the blocky 3D view and the flat view">View: flat</button>
   <div id="scenario-help" class="help"></div>
+</div>
 </div>
 <main>
   <section class="stage">
@@ -181,21 +242,27 @@
     <div class="chat" id="chat"><div class="empty" id="empty">Pick a scenario and press <b>Run</b>.</div></div>
   </section>
   <aside>
+    <div class="panel calls-panel"><h2>Calls</h2><ul class="calls" id="calls"><li class="sub" id="calls-empty">Each HTTP call shows up here with its raw JSON.</li></ul></div>
     <div class="panel"><h2>Deals &amp; approvals</h2><div id="cards"><div class="sub">Booked deals and approval holds appear here.</div></div></div>
     <div class="panel"><h2>Notes</h2><ul class="notes" id="notes"></ul></div>
   </aside>
 </main>
+<div class="scene-hint">Drag to turn · scroll to zoom</div>
 <footer>agenticape sandbox · buyer demo for the IAB Tech Lab reference seller agent · mock data only</footer>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const MIN_FLIGHT_MS = 450;
+const VIEW_KEY = "buyerDemoView";
+const REDUCED_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const flightMs = () => (view === "3d" ? (REDUCED_MOTION ? 300 : 750) : 450);
 const TONE_TAG = { ok: "OK", counter: "COUNTER", pending: "PENDING", refused: "REFUSED" };
 
 let config = null, source = null, runId = null, mode = "mine";
 let queue = [], draining = false, pendingBubbles = {}, startedAt = {};
+let view = "2d", voxel = null, voxelLoading = null, evHistory = [];
+const HISTORY_MAX = 400, CALLS_MAX = 40;
 
 function setStatus(text, cls) { const s = $("status"); s.textContent = text; s.className = "pill " + (cls || ""); }
 function scrollChat() { const c = $("chat"); c.scrollTop = c.scrollHeight; }
@@ -234,8 +301,9 @@ function onCallStart(ev) {
 }
 
 async function onCallEnd(ev) {
-  const k = key(ev); const wait = MIN_FLIGHT_MS - (performance.now() - (startedAt[k] || 0));
+  const k = key(ev); const wait = flightMs() - (performance.now() - (startedAt[k] || 0));
   if (wait > 0) await sleep(wait);
+  if (voxel) voxel.onEvent(ev);
   const pend = pendingBubbles[k]; delete pendingBubbles[k];
   const row = pend ? pend.row : el("div", "row seller"); row.innerHTML = "";
   const tone = ev.tone || "ok"; const b = el("div", "bubble " + tone);
@@ -247,14 +315,88 @@ async function onCallEnd(ev) {
   det.append(el("div", null, "Response (trimmed)"), el("pre", null, pretty(ev.response !== undefined ? ev.response : { error: ev.error, message: ev.error_message })));
   meta.append(det); b.append(meta); row.append(b);
   if (!pend) chat().append(row);
+  addCall(ev, pend);
   $("lane").classList.remove("flying"); $("lane-what").textContent = "";
   $("buyer-agent").classList.remove("talking"); $("seller-agent").classList.add("talking");
   setTimeout(() => $("seller-agent").classList.remove("talking"), 600);
   scrollChat();
 }
+function addCall(ev, pend) {
+  const empty = $("calls-empty"); if (empty) empty.remove();
+  const tone = ev.tone || "ok"; const li = el("li", tone);
+  li.append(el("span", "tag", TONE_TAG[tone] || String(ev.status_code)), document.createTextNode(ev.reply || String(ev.status_code)));
+  const meta = el("div", "meta", (mode === "live" && ev.run_label ? "run " + ev.run_label + " · " : "") + ev.method + " " + ev.path + " · " + ev.status_code + " · " + ev.latency_ms + " ms");
+  const det = el("details"); det.append(el("summary", null, "details"));
+  det.append(el("div", null, "Request"), el("pre", null, pretty(pend ? pend.request : { method: ev.method, path: ev.path, body: ev.request_body })));
+  det.append(el("div", null, "Response (trimmed)"), el("pre", null, pretty(ev.response !== undefined ? ev.response : { error: ev.error, message: ev.error_message })));
+  meta.append(det); li.append(meta);
+  const list = $("calls"); list.prepend(li);
+  while (list.children.length > CALLS_MAX) list.lastElementChild.remove();
+}
+
+function webglAvailable() {
+  try {
+    const c = document.createElement("canvas");
+    return !!(c.getContext("webgl2") || c.getContext("webgl") || c.getContext("experimental-webgl"));
+  } catch (e) { return false; }
+}
+function insets() {
+  const top = $("topbar").getBoundingClientRect().height;
+  const narrow = window.innerWidth <= 900;
+  const side = document.querySelector("main").getBoundingClientRect();
+  return { top, right: narrow ? 0 : side.width, bottom: narrow ? side.height : 0 };
+}
+function layout() {
+  document.body.style.setProperty("--top-h", $("topbar").getBoundingClientRect().height + "px");
+  if (voxel && view === "3d") voxel.resize();
+}
+function loadVoxel() {
+  if (voxel) return Promise.resolve(voxel);
+  if (!voxelLoading) {
+    voxelLoading = import("/static/voxel_scene.js").then((mod) => {
+      voxel = mod.createVoxelView({ container: $("scene3d"), labels: $("labels3d"), getInsets: insets, reducedMotion: REDUCED_MOTION });
+      for (const ev of evHistory) voxel.onEvent(ev);
+      return voxel;
+    });
+  }
+  return voxelLoading;
+}
+function fallbackToFlat(reason) {
+  setView("2d", false);
+  const t = $("view-toggle"); t.disabled = true; t.textContent = "View: flat"; t.title = reason;
+  addNote("INFO", reason);
+}
+async function setView(next, remember = true) {
+  view = next;
+  document.documentElement.classList.toggle("mode-3d", next === "3d");
+  document.body.classList.toggle("mode-3d", next === "3d");
+  document.body.classList.toggle("mode-2d", next !== "3d");
+  $("view-toggle").textContent = next === "3d" ? "View: blocky 3D" : "View: flat";
+  if (remember) { try { localStorage.setItem(VIEW_KEY, next); } catch (e) {} }
+  if (next !== "3d") { if (voxel) voxel.setActive(false); scrollChat(); return; }
+  layout();
+  try {
+    const v = await loadVoxel();
+    if (view === "3d") { layout(); v.setActive(true); }
+  } catch (e) {
+    fallbackToFlat("The 3D view could not start in this browser, so the flat view is shown.");
+  }
+}
+function initView() {
+  let saved = null; try { saved = localStorage.getItem(VIEW_KEY); } catch (e) {}
+  $("view-toggle").onclick = () => setView(view === "3d" ? "2d" : "3d");
+  if (!webglAvailable()) { fallbackToFlat("WebGL is not available, so the flat view is shown."); return; }
+  if (saved !== "2d") $("topbar").querySelector("details.explain").open = false;
+  setView(saved === "2d" ? "2d" : "3d", false);
+  if (window.ResizeObserver) new ResizeObserver(layout).observe($("topbar"));
+  window.addEventListener("resize", layout);
+}
+
 function key(ev) { return (ev.run_label || "") + ":" + ev.seq; }
 
 async function handle(ev) {
+  evHistory.push(ev); if (evHistory.length > HISTORY_MAX) evHistory.shift();
+  if (voxel && ev.type !== "call_end") voxel.onEvent(ev);
   switch (ev.type) {
     case "run_queued":
       if (mode === "mine") setStatus(ev.position > 1 ? "Waiting: " + (ev.position - 1) + " run(s) ahead" : "Waiting: next up", "waiting");
@@ -312,6 +454,7 @@ async function startRun() {
 }
 
 async function init() {
+  initView();
   const r = await fetch("/api/config", { credentials: "same-origin" }); config = await r.json();
   $("seller-url").textContent = config.seller_url;
   for (const [tier, has] of Object.entries(config.keys)) { $("key-chips").append(el("span", "chip" + (has ? " on" : ""), tier + (has ? " ✓" : " –"))); }
@@ -323,7 +466,8 @@ async function init() {
   $("pace").onchange = () => { if (runId) post("/api/runs/" + runId + "/pace", { pace: parseFloat($("pace").value) }); };
   $("run").onclick = startRun;
   $("clear").onclick = () => { $("chat").innerHTML = ""; $("chat").append(el("div", "empty", "Cleared.")); $("chat").firstChild.id = "empty";
-    $("notes").innerHTML = ""; $("cards").innerHTML = '<div class="sub">Booked deals and approval holds appear here.</div>'; };
+    $("notes").innerHTML = ""; $("cards").innerHTML = '<div class="sub">Booked deals and approval holds appear here.</div>';
+    $("calls").innerHTML = ""; evHistory = []; if (voxel) voxel.clear(); };
   if (config.live_feed) {
     $("live-wrap").hidden = false;
     $("live").onchange = () => {
