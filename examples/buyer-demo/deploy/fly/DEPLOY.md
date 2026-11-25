@@ -126,8 +126,10 @@ Plain env (in `fly.toml` `[env]`; change there and redeploy):
 ## What the hosted page guards
 
 - The browser picks only one of the fixed scenarios (`discovery`, `pricing`,
-  `negotiation`, `booking`, `anon-write`, `extras`, `all`) and a pause of 0 to 3
-  seconds. Nothing it sends reaches the seller.
+  `negotiation`, `booking`, `anon-write`, `extras`, `all`). Runs go at full
+  speed, and the page paces the playback itself. An optional server-side
+  pause is still accepted but clamped to 0 to 3 seconds. Nothing the browser
+  sends reaches the seller.
 - `POST`s must be same-origin JSON with the page's `X-Demo-Client` header. No
   CORS headers are ever sent, so other sites cannot start runs.
 - Each run streams to the viewer who started it, at an unguessable

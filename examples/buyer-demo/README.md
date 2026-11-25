@@ -55,7 +55,24 @@ $353,600 is over the $250k gate"), coloured green (agreed), amber (counter or
 held for approval) or red (refused). Under each reply are the method, path,
 status and latency, plus a click-to-expand of the raw request and response.
 A side panel shows deal and approval cards and the running notes. Pick a
-scenario, set the pause between steps (0 to 3 s), and press **Run**. The page
+scenario and press **Run**.
+
+The seller answers in milliseconds, so the page plays the run back one step
+at a time: the buyer speaks, then the seller replies (with any gold block,
+padlock or red X). Set the **Step timer** to 2, 4 (default), 6, 8 or 10
+seconds, or to a custom number, or pick **Manual**. Then click or tap anywhere
+on the scene (or press Space or →) to go to the next step. The playback bar at
+the bottom has Pause/Play (**P**), Next, a "Step 3 of 9" counter with a
+countdown line, and **Skip to end**. Clicks on controls, panels and JSON
+expanders never advance, and neither does dragging the camera.
+
+It works on phones in portrait and landscape. The controls fold into a
+compact bar, the calls, cards and notes open as a bottom sheet (☰), and you
+pinch to zoom. **Presenter mode** hides everything except the scene and the
+playback bar, and goes fullscreen where the browser allows it. iPhone Safari
+has no fullscreen for pages, so there it only hides the chrome.
+
+The page
 is plain HTML with no CDN and no build step, so it works offline: three.js r170
 is vendored as one file in `static/` (MIT, licence header kept), and all the
 block and character textures are drawn procedurally in the browser. Keys never
@@ -65,6 +82,8 @@ The `runs/` logs are written exactly as for the CLI.
 ![Buyer demo UI, blocky 3D view: booking scenario against a local sandbox seller](docs/ui-3d.png)
 
 ![Buyer demo UI, flat view: the same booking scenario](docs/ui-booking.png)
+
+<img alt="Phone, portrait" src="docs/ui-mobile-portrait.png" width="260"> <img alt="Phone, landscape" src="docs/ui-mobile-landscape.png" width="520">
 
 The same page is hosted for anyone at <https://iab-buyer.agenticape.ai>
 (`--serve` mode, with a per-visitor rate limit and a run queue). See

@@ -215,9 +215,23 @@ $env:KEYS_FILE = "C:\path\to\keys.fly.json"     # or set $env:SELLER_API_KEY etc
 uv run python buyer_demo.py --ui
 ```
 
-Your browser opens <http://127.0.0.1:8765/>. Pick a scenario (or `all`), set
-the pause between steps (0 to 3 seconds; about 1.2 s is easy to follow),
-press **Run**, and **Clear** to start over. Stop the server with Ctrl+C in
+Your browser opens <http://127.0.0.1:8765/>. Pick a scenario (or `all`) and
+press **Run**. The page replays the run one step at a time:
+
+- **Step timer**: seconds per step (2, 4, 6, 8, 10 or a custom number;
+  default 4), or **Manual**. The browser remembers your choice.
+- **Next step**: click or tap anywhere on the scene or page background, or
+  press Space or →. Controls, the side panel, JSON expanders and camera drags
+  don't count.
+- **Playback bar** (bottom): Pause/Play (or **P**), Next, the step counter
+  with a countdown line, and **Skip to end**.
+- **Clear** wipes the screen.
+- **Presenter mode** (in the controls; under ⋯ on a phone) shows only the
+  scene and the playback bar, and goes fullscreen where supported. Leave it
+  with ✕ or Esc.
+
+On a phone the side panel is a bottom sheet behind the ☰ button. One finger
+turns the camera, two fingers zoom, and a tap moves to the next step. Stop the server with Ctrl+C in
 the PowerShell window. Options: `--port 9000` for another port,
 `--no-browser` to only print the URL.
 
@@ -239,6 +253,17 @@ uv run pytest
 
 They use an in-process fake seller (no network) and cover the event stream,
 key redaction, the CLI lines, and the web server's guardrails.
+
+A headless browser check covers step playback (the 2 s timer, Manual mode,
+which clicks advance and which don't, keys) and the phone layouts (390x844
+and 844x390 with touch). It uses the same fake seller and needs Node 18+:
+
+```powershell
+cd tests\browser
+npm install
+npx playwright install chromium
+node check_playback.js
+```
 
 ## Logs
 
