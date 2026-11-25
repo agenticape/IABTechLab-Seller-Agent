@@ -119,6 +119,13 @@ async function manualDesktop(browser) {
   check((await step(page)) === 1, "manual: drag-to-rotate does not advance");
   await page.mouse.click(cx, cy);
   check((await step(page)) === 2, "manual: a background click advances");
+  const fresh = await page.evaluate(() => {
+    const b = document.querySelector(".label3d.bubble3d");
+    if (!b) return false;
+    const top = b.getBoundingClientRect().top;
+    return getComputedStyle(b).visibility === "hidden" || top > document.getElementById("topbar").offsetHeight;
+  });
+  check(fresh, "manual: a new 3D bubble appears at its anchor, not in the corner");
   await page.mouse.click(cx, cy);
   const summary = page.locator("#calls details summary").first();
   await summary.click();

@@ -559,6 +559,7 @@ export function createVoxelView({ container, labels, getInsets, reducedMotion, i
     const el = document.createElement("div");
     el.className = "label3d " + className;
     if (text != null) el.textContent = text;
+    el.style.visibility = "hidden"; // until placeLabels() has positioned it
     labels.append(el);
     const entry = { el, anchor };
     tracked.push(entry);
@@ -823,6 +824,7 @@ export function createVoxelView({ container, labels, getInsets, reducedMotion, i
         return;
       }
       entry.el.style.display = "";
+      entry.el.style.visibility = "";
       entry.el.style.transform = `translate3d(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px, 0) translate(-50%, -100%)`;
     });
   }
