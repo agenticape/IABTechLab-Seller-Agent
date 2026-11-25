@@ -641,3 +641,75 @@ first, then the PG ledger commit) inside the same per-quote booking lock.
 >   lifetime, or extend the quote's expiry when its booking approval is
 >   granted;
 > - document the interaction.
+
+---
+
+## Second round: replies to jaanijuk on #156 and #158
+
+Both branches are still based on upstream `main@eb40328`, with new commits
+on top (no history rewritten). Full unit and integration suites pass, and
+`ruff check src/` and `ruff format --check src/ tests/` are clean.
+
+| PR | Branch | Previous head | New head | Unit tests |
+|---|---|---|---|---|
+| #156 | `upstream/quote-booking-approval-gate` | `f68d461` | `a4bedc3` | 1938 passed |
+| #158 | `upstream/openrtb-auction-type` | `8f48ef5` | `ecdcb41` | 1957 passed |
+
+### #156
+
+> Thanks for testing this in two environments, and for the plan-ID-only and
+> next-day cases. Both are fixed (head now `a4bedc3`):
+>
+> 1. **Audience plan** (`4165cf5`): when a booking carries an
+>    `audience_plan`, the approval terms now hold the plan ID, every audience
+>    ref by role (type, taxonomy, version, identifier) and a readable
+>    `summary` for the operator. An approved re-submit books only if the
+>    selection matches. Any change, including the same plan ID with a
+>    different audience ref or dropping the plan, raises a fresh approval
+>    (202). Bookings without a plan are unchanged. Tests in
+>    `TestAudiencePlanApproval`: `test_approval_records_the_audience_selection`,
+>    `test_unchanged_audience_plan_books_after_approval` and
+>    `test_changed_audience_selection_needs_fresh_approval`
+>    (`same-plan-id-changed-ref`, `other-plan-id`, `plan-dropped`).
+> 2. **Template flight dates** (`a4bedc3`): omitted dates are now resolved
+>    when the approval is created, stored in its `terms` and returned in the
+>    202 body. A re-submit that still omits them books the approved dates,
+>    including on a later UTC day. Explicit dates are part of the request,
+>    so adding or changing one raises a fresh approval (202). Ownership is
+>    unchanged: the approval follows the buyer's pricing key, so another key
+>    with the same identity (or at the public tier) can re-submit it. Tests
+>    in `TestTemplateFlightDates`, with a frozen clock:
+>    `test_omitted_dates_book_the_approved_dates_across_a_utc_day_boundary`
+>    (23:50 → 00:10 UTC, re-submitted with a different key),
+>    `test_pending_resubmit_on_the_next_day_reuses_the_request` and
+>    `test_changed_explicit_date_needs_fresh_approval`.
+>
+> `docs/guides/approval-rules.md` describes both.
+
+### #158
+
+> Thanks for checking all four outputs, and for spotting the missing count.
+> Changes (head now `ecdcb41`):
+>
+> 1. **PG impression count** (`4a8f3fa`): `book_deal` now passes the quoted
+>    `terms.impressions` to `build_openrtb_deal_params` as
+>    `guaranteed_impressions`, as the proposal and AgentCore paths do. The
+>    Deals API push had the same gap and now passes its `impressions` too.
+>    Tests: `test_quote_booked_deal_carries_quoted_impressions_in_store_and_export`
+>    (the stored deal and the generic export carry
+>    `ext={"guaranteed": true, "impressions": 500000}` for PG and no `ext`
+>    for PD) and `test_deals_api_pg_push_carries_impressions`.
+> 2. **`ext` on the REST response and read-back** (`ecdcb41`): I documented
+>    it rather than adding it. These responses use the shared
+>    `DealBookingResponse` from `iab-agentic-primitives`, whose
+>    `OpenRTBParams` has no `ext` field and ignores unknown fields. A
+>    seller-side subclass wouldn't serialize `ext` either, so carrying it
+>    cleanly needs a change in the shared package. `docs/api/overview.md`
+>    now lists which outputs include `ext`: the stored record, the generic
+>    export, legacy `POST /deals` and the Deals API push. It also notes that
+>    the REST responses still carry the count as `deal.terms.impressions`.
+>
+> **PA pricing:** whether a PA price is a floor or a fixed price is a
+> question for the maintainers, so I've left PA as it is on this branch.
+> It's tracked in #165
+> (https://github.com/IABTechLab/seller-agent/issues/165).
