@@ -455,3 +455,20 @@ def test_page_references_no_external_urls():
         text = path.read_text(encoding="utf-8")
         assert not re.search(r"(?i)\b(?:https?:)?//[a-z0-9.-]+\.[a-z]{2,}", text), name
         assert not re.search(r"(?i)\b(?:src|href)\s*=\s*[\"']?(?:https?:|//)", text), name
+
+
+def test_voxel_scene_is_served_and_imports_only_vendored_three(tmp_runs):
+    import re
+
+    srv = Server(demo_ui.Settings(hosted=True))
+    try:
+        status, headers, body = srv.request("GET", "/static/voxel_scene.js")
+        assert status == 200
+        assert headers["Content-Type"].startswith("text/javascript")
+        imports = re.findall(r"""^\s*import\b[^;]*?from\s+["']([^"']+)["']""", body, re.M)
+        assert imports == ["./three.module.min.js"]
+        page = srv.request("GET", "/")[2]
+        assert 'import("/static/voxel_scene.js")' in page
+        assert "buyerDemoView" in page and "webglAvailable" in page
+    finally:
+        srv.close()
