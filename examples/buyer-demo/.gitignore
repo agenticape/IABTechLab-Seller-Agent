@@ -12,3 +12,7 @@ keys*.json
 runs/*.json
 runs/*.md
 !runs/.gitkeep
+
+# Hand-written Fly.io build files for the hosted UI (deploy/fly/DEPLOY.md)
+!/.dockerignore
+!/deploy/fly/Dockerfile
