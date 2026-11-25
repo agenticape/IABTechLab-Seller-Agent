@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from iab_agentic_primitives.primitives import DealStatus
 from iab_agentic_primitives.protocol import DealBookingRequest, DealBookingResponse
 
-from ....services import deal_service
+from ....services import approval_service, deal_service
 from .. import contract_mappers as cm
 from .. import deps
 from ..schemas import (
@@ -47,6 +47,37 @@ from ..schemas import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Seconds a buyer should wait between polls of a held booking. A human decides
+# these, so polling faster than this only adds load.
+BOOKING_APPROVAL_RETRY_AFTER_SECONDS = 60
+
+
+def _booking_status_url(approval_id: str) -> str:
+    return f"/api/v1/deals/approvals/{approval_id}"
+
+
+async def _held_booking_response(result: dict, api_key_record) -> JSONResponse:
+    """202 for a booking the approval gate holds.
+
+    ``Location`` names the buyer-scoped status resource (RFC 9110 15.3.3)
+    and ``Retry-After`` paces the polling. The key that made the request is
+    recorded so it, and only it, can read that resource.
+    """
+    approval_id = result["approval_id"]
+    await approval_service.record_booking_requester(
+        approval_id, getattr(api_key_record, "key_id", None)
+    )
+    status_url = _booking_status_url(approval_id)
+    return JSONResponse(
+        status_code=202,
+        content={**result, "status_url": status_url},
+        headers={
+            "Location": status_url,
+            "Retry-After": str(BOOKING_APPROVAL_RETRY_AFTER_SECONDS),
+        },
+    )
+
 
 # Ordered from lowest to highest privilege, mirroring the string values
 # ``BuyerContext.effective_tier`` / ``quote.buyer_tier`` carry on the wire.
@@ -122,8 +153,10 @@ async def book_deal(
     impressions / 1000) reaches ``APPROVAL_REQUIRED_ABOVE_VALUE``, or that
     the opt-in gate covers, is held for a human decision: HTTP 202 with
     ``status: pending_approval`` and an ``approval_id``, no deal minted.
-    Re-submit the booking after approval; a rejected booking is a 409
-    ``booking_rejected``.
+    ``Location`` (also ``status_url``) names the buyer-scoped
+    ``GET /api/v1/deals/approvals/{approval_id}`` to poll, paced by
+    ``Retry-After``. Re-submit the booking after approval; a rejected
+    booking is a 409 ``booking_rejected``.
 
     **Idempotency (FD-12):** the request carries a required
     ``idempotency_key``. A replay with a key already used for an identical
@@ -268,7 +301,7 @@ async def book_deal(
         # Held by the approval gate: no deal exists yet and nothing is
         # recorded under the idempotency key, so the buyer re-submits the
         # same booking once the operator has decided.
-        return JSONResponse(status_code=202, content=result)
+        return await _held_booking_response(result, api_key_record)
 
     try:
         await storage.set(
@@ -356,6 +389,43 @@ async def export_deals(
     return await deal_service.export_deals(format=format, status=status)
 
 
+@router.get("/api/v1/deals/approvals/{approval_id}", tags=["Deal Booking"])
+async def get_booking_approval(
+    approval_id: str,
+    api_key_record=Depends(deps._get_optional_api_key_record),
+):
+    """Poll a booking the approval gate held (the 202's ``Location``).
+
+    Buyer-scoped: only an API key that was handed this ``approval_id`` in a
+    202 can read it. Any other caller gets 404, whether or not the approval
+    exists. Operators use ``GET /approvals/{approval_id}``.
+
+    ``status`` is ``pending``, ``approved``, ``rejected`` or ``expired``.
+    After approval the buyer re-submits the same booking
+    (``next_action: resubmit_booking``); once that has minted the deal,
+    ``deal_id`` is set and ``next_action`` is ``none``. While pending, the
+    response carries ``Retry-After``.
+
+    Registered ahead of the ``/api/v1/deals/{deal_id}/...`` routes so the
+    literal ``approvals`` segment is matched first.
+    """
+    if not api_key_record:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": "authentication_required",
+                "message": "API key required to read a booking approval.",
+            },
+        )
+    view = await approval_service.get_booking_approval_status(
+        approval_id, getattr(api_key_record, "key_id", None)
+    )
+    headers = {}
+    if view["status"] == "pending":
+        headers["Retry-After"] = str(BOOKING_APPROVAL_RETRY_AFTER_SECONDS)
+    return JSONResponse(content=view, headers=headers)
+
+
 @router.get("/api/v1/deals/{deal_id}", tags=["Deal Booking"])
 async def get_deal_by_id(deal_id: str) -> DealBookingResponse:
     """Get the current status of a deal.
@@ -429,7 +499,7 @@ async def create_deal_from_template(
 
     deal_data = await deal_service.create_deal_from_template(request, context, catalog)
     if deal_data.get("status") == "pending_approval":
-        return JSONResponse(status_code=202, content=deal_data)
+        return await _held_booking_response(deal_data, api_key_record)
 
     return DealFromTemplateResponse(
         deal_id=deal_data["deal_id"],

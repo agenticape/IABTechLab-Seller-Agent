@@ -145,6 +145,7 @@ Registry reads are public; mutations require an operator credential.
 |--------|------|---------|
 | POST | `/api/v1/deals` | Book a deal from a previously issued quote |
 | GET | `/api/v1/deals` | List stored deals (operator; optional wire-status filter) |
+| GET | `/api/v1/deals/approvals/{approval_id}` | Poll a booking held for approval (buyer key that was handed the 202 only; see [Approval rules](../guides/approval-rules.md#following-up-on-a-held-booking-buyer)) |
 | GET | `/api/v1/deals/{deal_id}` | Get the current status of a deal |
 
 ## Orders

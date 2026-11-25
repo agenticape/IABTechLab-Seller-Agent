@@ -8,7 +8,7 @@ decision submission, and flow resumption after a decision.
 """
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -41,6 +41,103 @@ async def get_approval(approval_id: str) -> dict[str, Any]:
     return {
         "request": request.model_dump(mode="json"),
         "response": response.model_dump(mode="json") if response else None,
+    }
+
+
+def _booking_requesters_key(approval_id: str) -> str:
+    return f"approval_requesters:{approval_id}"
+
+
+async def record_booking_requester(approval_id: str, key_id: Optional[str]) -> None:
+    """Remember that the API key ``key_id`` was handed ``approval_id`` in a 202.
+
+    Only those keys can read the approval's buyer view
+    (:func:`get_booking_approval_status`). A held booking that is
+    re-submitted, possibly with another key of the same buyer, gets the same
+    ``approval_id``, so each key is added once.
+    """
+    from ..storage.factory import get_storage
+
+    if not isinstance(key_id, str) or not key_id:
+        return
+    storage = await get_storage()
+    key = _booking_requesters_key(approval_id)
+    requesters = await storage.get(key)
+    requesters = list(requesters) if isinstance(requesters, list) else []
+    if key_id not in requesters:
+        requesters.append(key_id)
+        await storage.set(key, requesters)
+
+
+async def get_booking_approval_status(approval_id: str, key_id: Optional[str]) -> dict[str, Any]:
+    """Buyer view of a held deal booking.
+
+    404 unless ``key_id`` is one of the keys that booking was held for, so
+    a buyer cannot learn whether someone else's approval exists. The view
+    carries the decision and, once the booking has been re-submitted and
+    booked, the ``deal_id``. It never includes the operator's reason, the
+    approval context or the flow snapshot.
+    """
+    from ..events.approval import ApprovalGate
+    from ..events.models import ApprovalStatus
+    from ..storage.factory import get_storage
+    from .deal_service import _booking_approval_key
+
+    storage = await get_storage()
+    gate = ApprovalGate(storage)
+    requesters = await storage.get(_booking_requesters_key(approval_id))
+    request = await gate.get_request(approval_id)
+    if (
+        request is None
+        or request.flow_type != "deal_booking"
+        or not isinstance(key_id, str)
+        or not isinstance(requesters, list)
+        or key_id not in requesters
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "approval_not_found", "approval_id": approval_id},
+        )
+
+    status = {
+        ApprovalStatus.PENDING: "pending",
+        ApprovalStatus.APPROVED: "approved",
+        ApprovalStatus.CONSUMED: "approved",
+        ApprovalStatus.REJECTED: "rejected",
+        ApprovalStatus.TIMED_OUT: "expired",
+    }.get(request.status, request.status.value)
+
+    quote_id = request.context.get("quote_id")
+    deal_id = request.deal_id or None
+    if status == "approved" and deal_id is None and quote_id:
+        quote = await storage.get_quote(quote_id)
+        if (
+            isinstance(quote, dict)
+            and quote.get("status") == "booked"
+            and quote.get("deal_id")
+            and await storage.get(_booking_approval_key(quote_id)) == approval_id
+        ):
+            deal_id = quote["deal_id"]
+
+    if status == "pending":
+        next_action = "poll"
+    elif status == "approved" and deal_id is None:
+        next_action = "resubmit_booking"
+    else:
+        next_action = "none"
+
+    response = await gate.get_response(approval_id)
+    return {
+        "approval_id": approval_id,
+        "status": status,
+        "deal_id": deal_id,
+        "next_action": next_action,
+        "quote_id": quote_id,
+        "product_id": request.context.get("product_id"),
+        "deal_type": request.context.get("deal_type"),
+        "created_at": request.created_at.isoformat(),
+        "decided_at": response.decided_at.isoformat() if response else None,
+        "expires_at": request.expires_at.isoformat() if request.expires_at else None,
     }
 
 

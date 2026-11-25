@@ -242,6 +242,55 @@ Every path that books a deal applies the same gate:
   request (202), even when it repeats the approved date. `buyer` is the pricing key, so another key with
   the same identity (or another public-tier key) re-submits the same request.
 
+### Following up on a held booking (buyer)
+
+The 202 from `POST /api/v1/deals` or `POST /api/v1/deals/from-template`
+names a buyer-scoped status resource:
+
+```http
+HTTP/1.1 202 Accepted
+Location: /api/v1/deals/approvals/3f9c...
+Retry-After: 60
+
+{"status": "pending_approval", "approval_id": "3f9c...", "quote_id": "qt-...",
+ "status_url": "/api/v1/deals/approvals/3f9c...", "message": "..."}
+```
+
+`GET /api/v1/deals/approvals/{approval_id}` with the same API key returns:
+
+```json
+{
+  "approval_id": "3f9c...",
+  "status": "approved",
+  "deal_id": null,
+  "next_action": "resubmit_booking",
+  "quote_id": "qt-...",
+  "product_id": "ctv-premium-sports",
+  "deal_type": "PG",
+  "created_at": "2026-11-25T10:00:00",
+  "decided_at": "2026-11-25T10:20:00",
+  "expires_at": "2026-11-26T10:00:00"
+}
+```
+
+| `status` | `next_action` | Meaning |
+|----------|---------------|---------|
+| `pending` | `poll` | Waiting for an operator. The response carries `Retry-After` |
+| `approved` | `resubmit_booking` | Approved; re-submit the same booking to mint the deal |
+| `approved` | `none` | Booked; `deal_id` is the minted deal |
+| `rejected` | `none` | Declined; re-submitting is a 409 `booking_rejected` |
+| `expired` | `none` | Timed out without a decision |
+
+Only an API key that received this `approval_id` in a 202 can read it.
+That includes another key of the same buyer that re-submitted the same
+booking. Any other key gets 404 `approval_not_found`, the same answer as for
+an unknown id, and an anonymous caller gets 401. The view never includes
+the operator's reason, the approval context or the flow snapshot. Operators
+keep using `GET /approvals/{approval_id}`.
+
+There is no callback. The seller does not call the buyer when a decision is
+made, so the buyer polls.
+
 Concurrent bookings of one quote (for example several buyer re-submits after
 an approval) mint exactly one deal; the others get a 409
 `quote_already_booked`. Concurrent re-submits of one approved template
