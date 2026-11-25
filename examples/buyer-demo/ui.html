@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1420">
 <title>agenticape · Buyer ↔ Seller agent demo (sandbox)</title>
 <style>
   :root {
@@ -10,10 +11,15 @@
     --text: #e7ecf5; --muted: #94a0b8; --buyer: #4f8cff; --seller: #a46bff;
     --ok: #2fbf71; --ok-bg: #12301f; --amber: #f0a92e; --amber-bg: #33270f;
     --red: #ef5a5a; --red-bg: #361616; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-right, 0px);
+    --side-w: 0px;
   }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   html, body { margin: 0; background: var(--bg); color: var(--text);
     font: 14px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
+  body { overflow-x: hidden; padding-bottom: calc(86px + var(--sab)); touch-action: manipulation; }
   .banner { background: repeating-linear-gradient(45deg, #3a2c0c, #3a2c0c 12px, #33270b 12px, #33270b 24px);
     color: #ffd98a; padding: 8px 18px; font-weight: 600; border-bottom: 1px solid #5a4416; }
   .banner small { font-weight: 400; color: #f4d79c; }
@@ -33,23 +39,26 @@
     margin: 0 18px 12px; padding: 10px 14px; background: var(--panel); border: 1px solid var(--line);
     border-radius: 10px; }
   .controls label { color: var(--muted); font-size: 13px; }
-  select, button { font: inherit; color: var(--text); background: var(--panel2);
+  .controls .group { display: inline-flex; align-items: center; gap: 8px; }
+  select, button, input[type=number] { font: inherit; color: var(--text); background: var(--panel2);
     border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
-  button { cursor: pointer; }
+  input[type=number] { width: 72px; }
+  button { cursor: pointer; touch-action: manipulation; }
   button.primary { background: #2c5ed6; border-color: #3b6ff0; font-weight: 600; }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  input[type=range] { width: 140px; vertical-align: middle; }
   .help { color: var(--muted); font-size: 12px; flex-basis: 100%; }
   .pill { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
-    background: var(--panel2); border: 1px solid var(--line); }
+    background: var(--panel2); border: 1px solid var(--line); white-space: nowrap; }
   .pill.running { color: #bcd3ff; border-color: #36579c; }
   .pill.waiting { color: var(--amber); border-color: #6b4f17; background: var(--amber-bg); }
   .pill.done { color: #bff0d4; border-color: #2c6b48; }
   .pill.error { color: #ffc2c2; border-color: #7a2c2c; background: var(--red-bg); }
+  #more-toggle, .sheet-head, #sheet-scrim, .presenter-only, .compact-only { display: none; }
   main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; padding: 0 18px 18px; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
   .stage { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-    display: flex; flex-direction: column; min-height: 520px; max-height: calc(100vh - 230px); }
+    display: flex; flex-direction: column; min-height: 520px;
+    max-height: calc(100vh - 300px); max-height: calc(100dvh - 300px); }
   .avatars { display: grid; grid-template-columns: 170px 1fr 170px; align-items: center;
     padding: 14px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0;
     background: var(--panel); border-radius: 12px 12px 0 0; z-index: 2; }
@@ -64,16 +73,17 @@
   .lane .packet { position: absolute; top: 19px; left: 6%; width: 18px; height: 18px;
     border-radius: 50%; background: var(--buyer); box-shadow: 0 0 12px var(--buyer); opacity: 0; }
   .lane.flying .packet { opacity: 1; animation: fly 0.9s ease-in-out infinite; }
-  .lane .what { position: absolute; left: 0; right: 0; top: 34px; font: 12px var(--mono); color: var(--muted); }
+  .lane .what { position: absolute; left: 0; right: 0; top: 34px; font: 12px var(--mono); color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @keyframes fly { 0% { left: 6%; } 100% { left: calc(94% - 18px); } }
-  .chat { overflow-y: auto; padding: 14px 16px 20px; flex: 1; }
+  .chat { overflow-y: auto; padding: 14px 16px 20px; flex: 1; min-height: 0; overscroll-behavior: contain; }
   .divider { text-align: center; color: var(--muted); font-size: 12px; margin: 16px 0 8px; }
   .divider b { color: var(--text); }
   .row { display: flex; margin: 8px 0; }
   .row.buyer { justify-content: flex-start; }
   .row.seller { justify-content: flex-end; }
   .bubble { max-width: 78%; padding: 9px 13px; border-radius: 14px; position: relative;
-    animation: pop .18s ease-out; }
+    animation: pop .18s ease-out; overflow-wrap: anywhere; }
   @keyframes pop { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
   .row.buyer .bubble { background: #1b2c52; border: 1px solid #2d4a86; border-bottom-left-radius: 4px; }
   .row.seller .bubble { background: var(--panel2); border: 1px solid var(--line); border-bottom-right-radius: 4px; }
@@ -84,7 +94,7 @@
   .bubble .tag { font-size: 11px; font-weight: 700; letter-spacing: .4px; margin-right: 6px; }
   .bubble.ok .tag { color: var(--ok); } .bubble.counter .tag, .bubble.pending .tag { color: var(--amber); }
   .bubble.refused .tag { color: var(--red); }
-  .meta { font: 11px var(--mono); color: var(--muted); margin-top: 6px; }
+  .meta { font: 11px var(--mono); color: var(--muted); margin-top: 6px; overflow-wrap: anywhere; }
   .meta details { margin-top: 4px; }
   .meta summary { cursor: pointer; color: #9fb4ff; }
   pre { white-space: pre-wrap; word-break: break-word; background: #0b1019; border: 1px solid var(--line);
@@ -95,7 +105,7 @@
   .typing span:nth-child(2) { animation-delay: .15s; } .typing span:nth-child(3) { animation-delay: .3s; }
   @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
   .empty { color: var(--muted); text-align: center; margin-top: 80px; }
-  aside { display: flex; flex-direction: column; gap: 14px; }
+  aside { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
   .panel h2 { margin: 0 0 8px; font-size: 14px; }
   .card { border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; border: 1px solid var(--line);
@@ -103,7 +113,7 @@
   .card.deal { background: var(--ok-bg); border-color: #2c6b48; }
   .card.approval { background: var(--amber-bg); border-color: #6b4f17; }
   .card h3 { margin: 0 0 6px; font-size: 13px; }
-  .card dl { display: grid; grid-template-columns: 92px 1fr; gap: 2px 8px; margin: 0; font-size: 12px; }
+  .card dl { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 2px 8px; margin: 0; font-size: 12px; }
   .card dt { color: var(--muted); } .card dd { margin: 0; font-family: var(--mono); word-break: break-all; }
   .notes { list-style: none; padding: 0; margin: 0; max-height: 420px; overflow-y: auto; font-size: 12.5px; }
   .notes li { padding: 6px 0; border-bottom: 1px dashed var(--line); }
@@ -120,10 +130,35 @@
   .calls .refused .tag { background: var(--red-bg); color: var(--red); }
   .calls .meta { margin-top: 2px; }
 
+  /* Playback bar: step through buffered events one action at a time. */
+  #playbar { position: fixed; z-index: 6; bottom: calc(12px + var(--sab));
+    left: calc((100% - var(--side-w)) / 2); transform: translateX(-50%);
+    display: flex; align-items: center; gap: 6px; padding: 9px 8px 6px; max-width: calc(100% - 16px);
+    background: rgba(15, 20, 32, .94); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, .35); }
+  #playbar button { min-width: 44px; min-height: 44px; padding: 0 12px; display: inline-flex;
+    align-items: center; justify-content: center; gap: 6px; border-radius: 10px; }
+  #playbar .ico { font-size: 15px; line-height: 1; }
+  #playbar .presenter-only, #playbar .compact-only { display: none; }
+  #step-count { font: 12.5px var(--mono); color: #c9d2e3; padding: 0 8px; white-space: nowrap;
+    min-width: 108px; text-align: center; }
+  #countdown { position: absolute; left: 12px; right: 12px; top: 3px; height: 3px; border-radius: 2px;
+    background: rgba(255, 255, 255, .07); overflow: hidden; }
+  #countdown span { display: block; height: 100%; width: 0; background: var(--buyer); }
+  #playbar.paused #countdown span { background: var(--amber); }
+  #advance-hint { position: fixed; z-index: 5; bottom: calc(84px + var(--sab));
+    left: calc((100% - var(--side-w)) / 2); transform: translateX(-50%); pointer-events: none;
+    font-size: 13px; color: #dfe6f3; background: rgba(15, 20, 32, .72); padding: 4px 12px;
+    border-radius: 999px; white-space: nowrap; }
+  #advance-hint[hidden] { display: none; }
+
   /* Blocky 3D view: the scene fills the window, the page becomes an overlay. */
-  html.mode-3d, body.mode-3d { height: 100%; overflow: hidden; }
-  body.mode-3d #scene3d { display: block; position: fixed; inset: 0; z-index: 0; background: #9fd3ff; }
-  #scene3d canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  html.mode-3d, body.mode-3d { height: 100%; height: 100dvh; overflow: hidden; overscroll-behavior: none; }
+  body.mode-3d { --side-w: 384px; padding-bottom: 0; }
+  body.mode-3d #scene3d { display: block; position: fixed; inset: 0; z-index: 0; background: #9fd3ff;
+    touch-action: none; }
+  #scene3d canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   #scene3d canvas:active { cursor: grabbing; }
   #labels3d { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
   body.mode-3d #topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 4;
@@ -131,26 +166,25 @@
   body.mode-3d #topbar .controls, body.mode-3d #topbar details.explain { background: rgba(23, 30, 46, .85); }
   body.mode-3d .controls { margin-bottom: 10px; }
   body.mode-3d main { position: fixed; z-index: 3; top: var(--top-h, 200px); right: 0; bottom: 0; width: 370px;
-    display: block; padding: 12px 14px 14px 0; overflow-y: auto; }
+    display: block; padding: 12px calc(14px + var(--sar)) calc(14px + var(--sab)) 0; overflow-y: auto; }
   body.mode-3d .stage { display: none; }
   body.mode-3d aside .panel { background: rgba(23, 30, 46, .90); backdrop-filter: blur(6px); }
   body.mode-3d .calls-panel { display: block; }
-  body.mode-3d .calls { max-height: 34vh; overflow-y: auto; }
-  body.mode-3d .notes { max-height: 22vh; }
-  body.mode-3d footer, body.mode-3d .scene-hint { position: fixed; z-index: 2; left: 12px; padding: 2px 8px;
-    border-radius: 6px; background: rgba(15, 20, 32, .72); color: #c9d2e3; font-size: 11.5px; }
-  body.mode-3d footer { bottom: 8px; }
-  body.mode-3d .scene-hint { display: block; bottom: 34px; }
-  @media (max-width: 900px) {
-    body.mode-3d main { top: auto; left: 0; width: auto; height: 40vh; padding: 8px; }
-  }
+  body.mode-3d .calls { max-height: 34vh; max-height: 34dvh; overflow-y: auto; }
+  body.mode-3d .notes { max-height: 22vh; max-height: 22dvh; }
+  body.mode-3d footer, body.mode-3d .scene-hint { position: fixed; z-index: 2; left: calc(12px + var(--sal));
+    padding: 2px 8px; border-radius: 6px; background: rgba(15, 20, 32, .72); color: #c9d2e3; font-size: 11.5px; }
+  body.mode-3d footer { bottom: calc(8px + var(--sab)); max-width: calc((100% - var(--side-w)) / 2 - 190px); }
+  body.mode-3d .scene-hint { display: block; bottom: calc(34px + var(--sab)); }
+  @media (max-width: 1100px) { body.mode-3d footer, body.mode-3d .scene-hint { display: none; } }
   .label3d { position: absolute; left: 0; top: 0; will-change: transform; white-space: nowrap;
     font-size: 12px; line-height: 1.35; }
   .label3d.nametag { background: rgba(0, 0, 0, .55); color: #fff; padding: 1px 7px; border-radius: 3px;
     font: 600 12px var(--mono); }
-  .label3d.bubble3d { white-space: normal; width: max-content; max-width: 250px; margin-top: -26px;
+  .label3d.bubble3d { white-space: normal; width: max-content; max-width: 250px;
     background: rgba(15, 20, 32, .92); color: var(--text); border: 2px solid #4f8cff; border-radius: 6px;
-    padding: 7px 10px; box-shadow: 0 3px 0 rgba(0, 0, 0, .25); animation: pop .18s ease-out; }
+    padding: 7px 10px; box-shadow: 0 3px 0 rgba(0, 0, 0, .25); animation: pop .18s ease-out;
+    overflow-wrap: anywhere; }
   .label3d.bubble3d.tone-ok { border-color: var(--ok); }
   .label3d.bubble3d.tone-counter, .label3d.bubble3d.tone-pending { border-color: var(--amber); }
   .label3d.bubble3d.tone-refused { border-color: var(--red); }
@@ -162,9 +196,80 @@
   .label3d.itemtag { font: 700 11px var(--mono); padding: 1px 6px; border-radius: 3px; }
   .label3d.itemtag.deal { background: #3a2f05; color: #ffe27a; border: 1px solid #f4c430; }
   .label3d.itemtag.lock { background: var(--red-bg); color: #ffd0a0; border: 1px solid var(--amber); }
+
+  /* Phones and small windows: compact top bar, side panel as a bottom sheet. */
+  @media (max-width: 760px), (max-height: 520px) {
+    html, body { height: 100%; height: 100dvh; overflow: hidden; overscroll-behavior: none; }
+    body { --side-w: 0px; padding-bottom: 0; }
+    body.mode-3d { --side-w: 0px; }
+    #topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 4; background: rgba(15, 20, 32, .92);
+      padding: var(--sat) var(--sar) 0 var(--sal); border-bottom: 1px solid var(--line); }
+    .banner { padding: 3px 10px; font-size: 11.5px; }
+    .banner small { display: none; }
+    header { padding: 6px 10px 2px; gap: 4px 10px; }
+    header h1 { font-size: 15px; }
+    header .sub, details.explain, .controls .help, .controls label.lbl { display: none; }
+    .controls, body.mode-3d .controls { margin: 4px 8px 6px; padding: 6px 8px; gap: 6px; }
+    .controls select, .controls button, .controls input { min-height: 40px; }
+    #scenario { max-width: 30vw; }
+    #step-timer { max-width: 30vw; }
+    #more-toggle { display: inline-flex; align-items: center; }
+    .controls .more { display: none; }
+    .controls.more-open .more { display: inline-flex; }
+    main, body.mode-3d main { position: fixed; z-index: 1; top: var(--top-h, 120px); left: 0; right: 0; bottom: 0;
+      width: auto; display: block; overflow: visible;
+      padding: 6px calc(8px + var(--sar)) calc(76px + var(--sab)) calc(8px + var(--sal)); }
+    body.mode-3d main { pointer-events: none; padding: 0; }
+    .stage { height: 100%; min-height: 0; max-height: none; }
+    .avatars { grid-template-columns: 72px minmax(0, 1fr) 72px; padding: 6px 8px; }
+    .agent svg { width: 40px; height: 40px; }
+    .agent .name { font-size: 12px; margin-top: 0; }
+    .agent .role { display: none; }
+    .chat { padding: 8px 10px 14px; }
+    .bubble { max-width: 90%; font-size: 14px; }
+    aside, body.mode-3d aside { position: fixed; z-index: 8; left: 0; right: 0; bottom: 0; display: block;
+      max-height: 78vh; max-height: 78dvh; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+      background: var(--bg); border-top: 1px solid var(--line); border-radius: 16px 16px 0 0;
+      padding: 0 calc(10px + var(--sar)) calc(14px + var(--sab)) calc(10px + var(--sal));
+      transform: translateY(105%); visibility: hidden; transition: transform .22s ease, visibility .22s; }
+    aside .panel { margin-bottom: 10px; }
+    body.sheet-open aside { transform: none; visibility: visible; }
+    .sheet-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0;
+      z-index: 1; background: var(--bg); padding: 8px 0; }
+    .sheet-head button { min-width: 44px; min-height: 44px; }
+    body.sheet-open #sheet-scrim { display: block; position: fixed; inset: 0; z-index: 7; background: rgba(0, 0, 0, .45); }
+    body.mode-3d .calls, body.mode-3d .notes, .notes { max-height: none; }
+    .compact-only, #playbar .compact-only { display: inline-flex; }
+    #playbar { left: 50%; bottom: calc(8px + var(--sab)); gap: 4px; padding: 9px 6px 6px; }
+    #playbar .txt { display: none; }
+    #step-count { min-width: 0; padding: 0 4px; font-size: 13px; }
+    #advance-hint { left: 50%; bottom: calc(76px + var(--sab)); }
+    footer, .scene-hint, body.mode-3d footer, body.mode-3d .scene-hint { display: none; }
+    .label3d.bubble3d { font-size: 14px; max-width: min(240px, 46vw); padding: 6px 9px; }
+    .label3d .meta3d { display: none; }
+    .label3d.nametag { font-size: 11px; }
+  }
+  @media (max-height: 520px) {
+    header { display: none; }
+    .banner { padding: 2px 10px; font-size: 11px; }
+    .controls, body.mode-3d .controls { margin: 3px 8px 4px; padding: 4px 8px; }
+  }
+
+  /* Presenter mode: only the scene (or chat) and the playback bar. */
+  body.presenter { --side-w: 0px; }
+  body.presenter #topbar, body.presenter aside, body.presenter footer, body.presenter .scene-hint,
+  body.presenter.mode-3d main { display: none; }
+  body.presenter.mode-2d main { position: fixed; inset: 0; z-index: 1; display: block;
+    padding: calc(10px + var(--sat)) calc(10px + var(--sar)) calc(80px + var(--sab)) calc(10px + var(--sal)); }
+  body.presenter .stage { height: 100%; max-height: none; min-height: 0; }
+  body.presenter .presenter-only, body.presenter #playbar .presenter-only { display: inline-flex; }
+  body.presenter .compact-only, body.presenter #playbar .compact-only { display: none; }
+  html.presenter, body.presenter { height: 100%; height: 100dvh; overflow: hidden; }
+
   @media (prefers-reduced-motion: reduce) {
     .bubble, .card, .label3d.bubble3d { animation: none; }
     .lane.flying .packet { animation: none; left: 45%; }
+    aside, body.mode-3d aside { transition: none; }
   }
 </style>
 </head>
@@ -191,21 +296,36 @@
     <li>Green means the seller agreed, amber means it countered or held the request for a human,
       red means it refused (for example, writes with no API key). Click <i>details</i> for the raw JSON.</li>
     <li>Bookings over $250,000 are held for human approval (HTTP 202). This page never approves them.</li>
-    <li>In the blocky 3D view, drag to turn the camera and scroll to zoom. Booked deals appear as gold
+    <li>The run is replayed one step at a time. Set the <i>Step timer</i>, or pick <i>Manual</i> and click
+      anywhere (or press Space / →) for the next step. <i>P</i> pauses.</li>
+    <li>In the blocky 3D view, drag to turn the camera and scroll (or pinch) to zoom. Booked deals appear as gold
       blocks on the stall and approval holds as padlock blocks. The <i>View</i> button switches to the flat view.</li>
   </ul>
 </details>
-<div class="controls">
-  <label for="scenario">Scenario</label>
-  <select id="scenario"></select>
+<div class="controls" id="controls">
+  <label for="scenario" class="lbl">Scenario</label>
+  <select id="scenario" aria-label="Scenario"></select>
   <button id="run" class="primary">Run</button>
-  <label for="pace">Pause between steps</label>
-  <input id="pace" type="range" min="0" max="3" step="0.1" value="1.2">
-  <span id="pace-val" class="sub">1.2 s</span>
-  <button id="clear">Clear</button>
-  <label id="live-wrap" hidden><input id="live" type="checkbox"> Watch live feed (everyone's runs)</label>
+  <span class="group">
+    <label for="step-timer" class="lbl">Step timer</label>
+    <select id="step-timer" aria-label="Step timer">
+      <option value="manual">Manual</option>
+      <option value="2">2 s</option>
+      <option value="4">4 s</option>
+      <option value="6">6 s</option>
+      <option value="8">8 s</option>
+      <option value="10">10 s</option>
+      <option value="custom">Custom…</option>
+    </select>
+    <input id="step-custom" type="number" min="1" max="60" step="0.5" inputmode="decimal"
+      aria-label="Seconds per step" hidden>
+  </span>
   <span id="status" class="pill">Idle</span>
-  <button id="view-toggle" title="Switch between the blocky 3D view and the flat view">View: flat</button>
+  <button id="more-toggle" aria-expanded="false" aria-controls="controls" title="More controls">⋯</button>
+  <button id="clear" class="more">Clear</button>
+  <label id="live-wrap" class="more" hidden><input id="live" type="checkbox"> Watch live feed (everyone's runs)</label>
+  <button id="view-toggle" class="more" title="Switch between the blocky 3D view and the flat view">View: flat</button>
+  <button id="presenter-toggle" class="more" title="Hide everything except the scene and the playback bar">Presenter mode</button>
   <div id="scenario-help" class="help"></div>
 </div>
 </div>
@@ -241,26 +361,40 @@
     </div>
     <div class="chat" id="chat"><div class="empty" id="empty">Pick a scenario and press <b>Run</b>.</div></div>
   </section>
-  <aside>
+  <aside id="side" aria-label="Calls, deals and notes">
+    <div class="sheet-head"><b>Calls, deals &amp; notes</b><button id="sheet-close" aria-label="Close panel">✕</button></div>
     <div class="panel calls-panel"><h2>Calls</h2><ul class="calls" id="calls"><li class="sub" id="calls-empty">Each HTTP call shows up here with its raw JSON.</li></ul></div>
     <div class="panel"><h2>Deals &amp; approvals</h2><div id="cards"><div class="sub">Booked deals and approval holds appear here.</div></div></div>
     <div class="panel"><h2>Notes</h2><ul class="notes" id="notes"></ul></div>
   </aside>
 </main>
+<div id="sheet-scrim"></div>
+<div id="advance-hint" hidden>Click anywhere to continue</div>
+<div id="playbar" role="toolbar" aria-label="Playback">
+  <div id="countdown" aria-hidden="true"><span></span></div>
+  <button id="bar-run" class="presenter-only primary" aria-label="Run the selected scenario"><span class="ico">▶</span><span class="txt">Run</span></button>
+  <button id="pause" aria-label="Pause" title="Pause / resume (P)"><span class="ico">⏸</span><span class="txt">Pause</span></button>
+  <button id="next" aria-label="Next step" title="Next step (Space or →)"><span class="ico">⏵</span><span class="txt">Next</span></button>
+  <span id="step-count" aria-live="polite">No steps yet</span>
+  <button id="skip" aria-label="Skip to end" title="Skip to the end of the run"><span class="ico">⏭</span><span class="txt">Skip to end</span></button>
+  <button id="sheet-open" class="compact-only" aria-label="Open calls, deals and notes" aria-controls="side"><span class="ico">☰</span></button>
+  <button id="presenter-exit" class="presenter-only" aria-label="Exit presenter mode"><span class="ico">✕</span><span class="txt">Exit</span></button>
+</div>
 <div class="scene-hint">Drag to turn · scroll to zoom</div>
 <footer>agenticape sandbox · buyer demo for the IAB Tech Lab reference seller agent · mock data only</footer>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const VIEW_KEY = "buyerDemoView";
+const TIMER_KEY = "buyerDemoStepTimer";
 const REDUCED_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-const flightMs = () => (view === "3d" ? (REDUCED_MOTION ? 300 : 750) : 450);
+const COMPACT = window.matchMedia("(max-width: 760px), (max-height: 520px)");
+const COARSE = window.matchMedia("(pointer: coarse)");
 const TONE_TAG = { ok: "OK", counter: "COUNTER", pending: "PENDING", refused: "REFUSED" };
 
 let config = null, source = null, runId = null, mode = "mine";
-let queue = [], draining = false, pendingBubbles = {}, startedAt = {};
+let pendingBubbles = {};
 let view = "2d", voxel = null, voxelLoading = null, evHistory = [];
 const HISTORY_MAX = 400, CALLS_MAX = 40;
 
@@ -297,13 +431,11 @@ function onCallStart(ev) {
   const srow = el("div", "row seller"); const sb = el("div", "bubble typing");
   sb.append(el("span"), el("span"), el("span")); srow.append(sb); chat().append(srow);
   pendingBubbles[key(ev)] = { row: srow, request: { method: ev.method, path: ev.path, as: ev.who, params: ev.params || undefined, headers: ev.request_headers, body: ev.request_body } };
-  startedAt[key(ev)] = performance.now(); scrollChat();
+  scrollChat();
 }
 
-async function onCallEnd(ev) {
-  const k = key(ev); const wait = flightMs() - (performance.now() - (startedAt[k] || 0));
-  if (wait > 0) await sleep(wait);
-  if (voxel) voxel.onEvent(ev);
+function onCallEnd(ev) {
+  const k = key(ev);
   const pend = pendingBubbles[k]; delete pendingBubbles[k];
   const row = pend ? pend.row : el("div", "row seller"); row.innerHTML = "";
   const tone = ev.tone || "ok"; const b = el("div", "bubble " + tone);
@@ -334,6 +466,10 @@ function addCall(ev, pend) {
   while (list.children.length > CALLS_MAX) list.lastElementChild.remove();
 }
 
+// ---------------------------------------------------------------------------
+// Views: blocky 3D (default) and flat
+// ---------------------------------------------------------------------------
+
 function webglAvailable() {
   try {
     const c = document.createElement("canvas");
@@ -341,10 +477,15 @@ function webglAvailable() {
   } catch (e) { return false; }
 }
 function insets() {
+  const compact = COMPACT.matches, presenting = document.body.classList.contains("presenter");
   const top = $("topbar").getBoundingClientRect().height;
-  const narrow = window.innerWidth <= 900;
   const side = document.querySelector("main").getBoundingClientRect();
-  return { top, right: narrow ? 0 : side.width, bottom: narrow ? side.height : 0 };
+  const bar = $("playbar").getBoundingClientRect();
+  return {
+    top,
+    right: compact || presenting ? 0 : side.width,
+    bottom: bar.height ? Math.max(0, window.innerHeight - bar.top + 4) : 0,
+  };
 }
 function layout() {
   document.body.style.setProperty("--top-h", $("topbar").getBoundingClientRect().height + "px");
@@ -354,8 +495,10 @@ function loadVoxel() {
   if (voxel) return Promise.resolve(voxel);
   if (!voxelLoading) {
     voxelLoading = import("/static/voxel_scene.js").then((mod) => {
-      voxel = mod.createVoxelView({ container: $("scene3d"), labels: $("labels3d"), getInsets: insets, reducedMotion: REDUCED_MOTION });
+      voxel = mod.createVoxelView({ container: $("scene3d"), labels: $("labels3d"), getInsets: insets,
+        reducedMotion: REDUCED_MOTION, isCompact: () => COMPACT.matches });
       for (const ev of evHistory) voxel.onEvent(ev);
+      voxel.finish();
       return voxel;
     });
   }
@@ -373,7 +516,7 @@ async function setView(next, remember = true) {
   document.body.classList.toggle("mode-2d", next !== "3d");
   $("view-toggle").textContent = next === "3d" ? "View: blocky 3D" : "View: flat";
   if (remember) { try { localStorage.setItem(VIEW_KEY, next); } catch (e) {} }
-  if (next !== "3d") { if (voxel) voxel.setActive(false); scrollChat(); return; }
+  if (next !== "3d") { if (voxel) voxel.setActive(false); layout(); scrollChat(); return; }
   layout();
   try {
     const v = await loadVoxel();
@@ -385,18 +528,23 @@ async function setView(next, remember = true) {
 function initView() {
   let saved = null; try { saved = localStorage.getItem(VIEW_KEY); } catch (e) {}
   $("view-toggle").onclick = () => setView(view === "3d" ? "2d" : "3d");
+  if (window.ResizeObserver) new ResizeObserver(layout).observe($("topbar"));
+  window.addEventListener("resize", layout);
+  window.addEventListener("orientationchange", () => setTimeout(layout, 250));
   if (!webglAvailable()) { fallbackToFlat("WebGL is not available, so the flat view is shown."); return; }
   if (saved !== "2d") $("topbar").querySelector("details.explain").open = false;
   setView(saved === "2d" ? "2d" : "3d", false);
-  if (window.ResizeObserver) new ResizeObserver(layout).observe($("topbar"));
-  window.addEventListener("resize", layout);
 }
+
+// ---------------------------------------------------------------------------
+// Applying events (one beat at a time)
+// ---------------------------------------------------------------------------
 
 function key(ev) { return (ev.run_label || "") + ":" + ev.seq; }
 
-async function handle(ev) {
+function apply(ev) {
   evHistory.push(ev); if (evHistory.length > HISTORY_MAX) evHistory.shift();
-  if (voxel && ev.type !== "call_end") voxel.onEvent(ev);
+  if (voxel) voxel.onEvent(ev);
   switch (ev.type) {
     case "run_queued":
       if (mode === "mine") setStatus(ev.position > 1 ? "Waiting: " + (ev.position - 1) + " run(s) ahead" : "Waiting: next up", "waiting");
@@ -409,7 +557,7 @@ async function handle(ev) {
     case "scenario_start":
       addDivider([el("b", null, ev.name), document.createTextNode(" · " + ev.help)]); break;
     case "call_start": onCallStart(ev); break;
-    case "call_end": await onCallEnd(ev); break;
+    case "call_end": onCallEnd(ev); break;
     case "card": addCard(ev); break;
     case "note": addNote("INFO", ev.text); break;
     case "finding": addNote("NOTE", ev.text); break;
@@ -423,17 +571,266 @@ async function handle(ev) {
       break;
   }
 }
-async function drain() {
-  if (draining) return; draining = true;
-  try { while (queue.length) { await handle(queue.shift()); } } finally { draining = false; }
+
+// ---------------------------------------------------------------------------
+// Playback: the server runs at full speed; the browser buffers its events
+// and plays them back as beats (buyer speaks / seller replies / intro).
+// ---------------------------------------------------------------------------
+
+const player = {
+  beats: [], pos: 0, open: null, due: true, paused: false, skipping: false,
+  seconds: 4, deadline: 0, total: 0, remaining: 0, timer: 0, frame: 0,
+  runs: {}, current: null,
+};
+
+function runInfo(label) {
+  return player.runs[label] || (player.runs[label] = { total: 0, ended: false });
 }
+function closeOpen() { if (player.open) { player.open.ready = true; player.open = null; } }
+function pushBeat(events, opts = {}) {
+  const label = events[0].run_label || "";
+  const beat = { events, ready: !opts.open, auto: !!opts.auto, label, n: 0 };
+  if (!beat.auto) beat.n = ++runInfo(label).total;
+  player.beats.push(beat);
+  if (opts.open) player.open = beat;
+  return beat;
+}
+function ingest(ev) {
+  switch (ev.type) {
+    case "run_queued": apply(ev); return;
+    case "run_start":
+      closeOpen(); pushBeat([ev], { auto: true }); break;
+    case "run_end": case "run_error":
+      closeOpen(); runInfo(ev.run_label || "").ended = true; pushBeat([ev], { auto: true }); break;
+    case "scenario_start": closeOpen(); pushBeat([ev], { open: true }); break;
+    case "call_start": closeOpen(); pushBeat([ev]); break;
+    case "call_end": closeOpen(); pushBeat([ev], { open: true }); break;
+    case "card": case "note": case "finding":
+      if (player.open) player.open.events.push(ev); else pushBeat([ev], { open: true });
+      break;
+    default: apply(ev); return;
+  }
+  pump();
+}
+function playBeat(beat) {
+  player.pos++;
+  for (const ev of beat.events) apply(ev);
+  if (!beat.auto) player.current = beat;
+  if (beat.events.some((e) => e.type === "run_end" || e.type === "run_error")) player.skipping = false;
+}
+function snap() { if (voxel) voxel.finish(); }
+function pump() {
+  for (;;) {
+    const beat = player.beats[player.pos];
+    if (!beat || !beat.ready) break;
+    if (beat.auto) { playBeat(beat); continue; }
+    if (player.skipping) { snap(); playBeat(beat); snap(); continue; }
+    if (!player.due) break;
+    player.due = false;
+    playBeat(beat);
+    startTimer();
+  }
+  if (player.beats.length > 600 && player.pos > 300) {
+    player.beats.splice(0, player.pos); player.pos = 0;
+  }
+  renderBar();
+}
+function startTimer() {
+  clearTimeout(player.timer);
+  player.deadline = 0;
+  if (player.seconds <= 0) return;
+  player.total = player.seconds * 1000;
+  if (player.paused) { player.remaining = player.total; return; }
+  armTimer(player.total);
+}
+function armTimer(ms) {
+  clearTimeout(player.timer);
+  player.deadline = performance.now() + ms;
+  player.timer = setTimeout(() => { player.deadline = 0; player.due = true; pump(); }, ms);
+  tickCountdown();
+}
+function tickCountdown() {
+  cancelAnimationFrame(player.frame);
+  const bar = $("countdown").firstElementChild;
+  const draw = () => {
+    let frac = 0;
+    if (player.paused && player.remaining) frac = player.remaining / player.total;
+    else if (player.deadline) frac = Math.max(0, (player.deadline - performance.now()) / player.total);
+    bar.style.width = (frac * 100).toFixed(2) + "%";
+    if (player.deadline && !player.paused) player.frame = requestAnimationFrame(draw);
+  };
+  draw();
+}
+function next() {
+  snap();
+  clearTimeout(player.timer); player.deadline = 0; player.remaining = 0;
+  player.due = true;
+  pump();
+}
+function togglePause(force) {
+  const pause = force === undefined ? !player.paused : force;
+  if (pause === player.paused) return;
+  player.paused = pause;
+  if (pause) {
+    if (player.deadline) { player.remaining = Math.max(0, player.deadline - performance.now()); clearTimeout(player.timer); player.deadline = 0; }
+  } else if (player.remaining) {
+    const ms = player.remaining; player.remaining = 0; armTimer(ms);
+  } else if (player.seconds > 0 && !player.due && player.current) {
+    startTimer();
+  }
+  tickCountdown(); renderBar();
+}
+function skipToEnd() {
+  clearTimeout(player.timer); player.deadline = 0; player.remaining = 0;
+  player.skipping = !!runId || mode === "live";
+  player.due = true;
+  snap();
+  for (;;) {
+    const beat = player.beats[player.pos];
+    if (!beat || !beat.ready) break;
+    playBeat(beat); snap();
+  }
+  if (!runId) player.skipping = false;
+  tickCountdown(); renderBar();
+}
+function resetPlayer() {
+  clearTimeout(player.timer);
+  Object.assign(player, { beats: [], pos: 0, open: null, due: true, skipping: false, deadline: 0, remaining: 0, runs: {}, current: null });
+  tickCountdown(); renderBar();
+}
+function renderBar() {
+  const cur = player.current;
+  const info = cur ? player.runs[cur.label] : null;
+  $("step-count").textContent = cur && info ? "Step " + cur.n + " of " + info.total + (info.ended ? "" : "…") : "No steps yet";
+  const manual = player.seconds <= 0;
+  const pauseBtn = $("pause");
+  pauseBtn.disabled = manual;
+  pauseBtn.querySelector(".ico").textContent = player.paused ? "▶" : "⏸";
+  pauseBtn.querySelector(".txt").textContent = player.paused ? "Play" : "Pause";
+  pauseBtn.setAttribute("aria-label", player.paused ? "Resume" : "Pause");
+  $("playbar").classList.toggle("paused", player.paused);
+  const upcoming = player.beats[player.pos];
+  $("next").disabled = !upcoming && !runId && mode !== "live";
+  $("skip").disabled = !upcoming && !player.open && !runId;
+  $("advance-hint").hidden = !(manual && upcoming && upcoming.ready && !player.skipping);
+  $("advance-hint").textContent = (COARSE.matches ? "Tap" : "Click") + " anywhere to continue";
+  $("countdown").style.visibility = manual ? "hidden" : "visible";
+}
+
+// Step timer: Manual, 2-10 s or a custom number; remembered in localStorage.
+function setTimer(value, remember = true) {
+  let seconds = 4, choice = "4";
+  if (value === "manual") { seconds = 0; choice = "manual"; }
+  else if (/^custom:/.test(value) || !["2", "4", "6", "8", "10"].includes(value)) {
+    const n = parseFloat(String(value).replace("custom:", ""));
+    if (isFinite(n) && n > 0) { seconds = Math.min(60, Math.max(1, n)); choice = "custom"; } else { seconds = 4; choice = "4"; }
+  } else { seconds = parseFloat(value); choice = value; }
+  player.seconds = seconds;
+  $("step-timer").value = choice;
+  $("step-custom").hidden = choice !== "custom";
+  if (choice === "custom") $("step-custom").value = seconds;
+  if (remember) { try { localStorage.setItem(TIMER_KEY, choice === "custom" ? "custom:" + seconds : choice); } catch (e) {} }
+  if (player.current && !player.due) { player.remaining = 0; startTimer(); }
+  tickCountdown(); renderBar();
+}
+function initTimer() {
+  let saved = null; try { saved = localStorage.getItem(TIMER_KEY); } catch (e) {}
+  setTimer(saved || "4", false);
+  $("step-timer").onchange = () => {
+    const v = $("step-timer").value;
+    if (v === "custom") { $("step-custom").hidden = false; $("step-custom").focus(); setTimer("custom:" + ($("step-custom").value || player.seconds || 4)); }
+    else setTimer(v);
+  };
+  $("step-custom").onchange = () => setTimer("custom:" + $("step-custom").value);
+}
+
+// Click/tap anywhere on the scene or page background advances; controls,
+// panels, JSON expanders and camera drags do not.
+const NO_ADVANCE = "button, a, input, select, textarea, label, summary, details, pre, #topbar, aside, #playbar, #sheet-scrim, .card, .meta";
+const press = { x: 0, y: 0, moved: false, multi: false, active: 0 };
+function initAdvance() {
+  document.addEventListener("pointerdown", (e) => {
+    press.active++;
+    if (press.active === 1) { press.x = e.clientX; press.y = e.clientY; press.moved = false; press.multi = false; }
+    else press.multi = true;
+  }, true);
+  document.addEventListener("pointermove", (e) => {
+    if (!press.active) return;
+    const limit = e.pointerType === "mouse" ? 6 : 12;
+    if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > limit) press.moved = true;
+  }, true);
+  const release = () => { press.active = Math.max(0, press.active - 1); };
+  document.addEventListener("pointerup", release, true);
+  document.addEventListener("pointercancel", () => { release(); press.moved = true; }, true);
+  document.addEventListener("click", (e) => {
+    if (press.moved || press.multi) return;
+    if (e.target.closest && e.target.closest(NO_ADVANCE)) return;
+    const sel = window.getSelection && window.getSelection();
+    if (sel && String(sel).length) return;
+    next();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.closest && e.target.closest("input, select, textarea")) return;
+    if (e.key === "Escape") { if (document.body.classList.contains("sheet-open")) toggleSheet(false); else if (document.body.classList.contains("presenter")) setPresenter(false); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "ArrowRight" || (e.key === " " && !(e.target.closest && e.target.closest("button, summary, a")))) {
+      e.preventDefault(); next();
+    } else if (e.key === "p" || e.key === "P") {
+      e.preventDefault(); togglePause();
+    }
+  });
+}
+
+// Bottom sheet (phones) and presenter mode.
+function toggleSheet(open) {
+  document.body.classList.toggle("sheet-open", open);
+  $("sheet-open").setAttribute("aria-expanded", String(open));
+}
+function setPresenter(on) {
+  document.body.classList.toggle("presenter", on);
+  document.documentElement.classList.toggle("presenter", on);
+  toggleSheet(false);
+  const root = document.documentElement;
+  const request = root.requestFullscreen || root.webkitRequestFullscreen;
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  const current = document.fullscreenElement || document.webkitFullscreenElement;
+  try {
+    if (on && request && !current) { const p = request.call(root); if (p && p.catch) p.catch(() => {}); }
+    if (!on && exit && current) { const p = exit.call(document); if (p && p.catch) p.catch(() => {}); }
+  } catch (e) { /* no Fullscreen API (iPhone Safari): presenter mode still hides the chrome */ }
+  setTimeout(layout, 50); layout();
+}
+function initChrome() {
+  $("sheet-open").onclick = () => toggleSheet(true);
+  $("sheet-close").onclick = () => toggleSheet(false);
+  $("sheet-scrim").onclick = () => toggleSheet(false);
+  $("more-toggle").onclick = () => {
+    const open = !$("controls").classList.contains("more-open");
+    $("controls").classList.toggle("more-open", open); $("more-toggle").setAttribute("aria-expanded", String(open));
+  };
+  $("presenter-toggle").onclick = () => setPresenter(true);
+  $("presenter-exit").onclick = () => setPresenter(false);
+  const onFs = () => { if (!(document.fullscreenElement || document.webkitFullscreenElement) && document.body.classList.contains("presenter")) setPresenter(false); };
+  document.addEventListener("fullscreenchange", onFs);
+  document.addEventListener("webkitfullscreenchange", onFs);
+  $("pause").onclick = () => togglePause();
+  $("next").onclick = () => next();
+  $("skip").onclick = () => skipToEnd();
+  $("bar-run").onclick = () => startRun();
+  COMPACT.addEventListener && COMPACT.addEventListener("change", () => { toggleSheet(false); layout(); });
+}
+
+// ---------------------------------------------------------------------------
+// Server
+// ---------------------------------------------------------------------------
+
 function connect(url) {
   if (source) source.close();
   source = new EventSource(url);
-  source.onmessage = (m) => { try { queue.push(JSON.parse(m.data)); drain(); } catch (e) {} };
-  source.addEventListener("end", () => { source.close(); source = null; });
+  source.onmessage = (m) => { let ev; try { ev = JSON.parse(m.data); } catch (e) { return; } ingest(ev); };
+  source.addEventListener("end", () => { if (source) source.close(); source = null; });
 }
-function finishRun() { runId = null; $("run").disabled = $("live").checked; }
+function finishRun() { runId = null; $("run").disabled = $("bar-run").disabled = $("live").checked; renderBar(); }
 
 async function post(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-Demo-Client": "1" },
@@ -443,27 +840,26 @@ async function post(url, body) {
 }
 
 async function startRun() {
-  $("run").disabled = true;
-  const res = await post("/api/runs", { scenario: $("scenario").value, pace: parseFloat($("pace").value) });
+  if (runId) return;
+  $("run").disabled = $("bar-run").disabled = true;
+  resetPlayer();
+  const res = await post("/api/runs", { scenario: $("scenario").value });
   if (res.status !== 202) {
     const msg = (res.data && res.data.message) || ("HTTP " + res.status);
     setStatus(res.status === 429 ? "Rate limited" : "Not started", "error"); addNote("RUN", msg);
-    $("run").disabled = false; return;
+    $("run").disabled = $("bar-run").disabled = false; return;
   }
-  runId = res.data.run_id; setStatus("Waiting", "waiting"); connect(res.data.events_url);
+  runId = res.data.run_id; setStatus("Waiting", "waiting"); connect(res.data.events_url); renderBar();
 }
 
 async function init() {
-  initView();
+  initTimer(); initAdvance(); initChrome(); initView(); renderBar();
   const r = await fetch("/api/config", { credentials: "same-origin" }); config = await r.json();
   $("seller-url").textContent = config.seller_url;
   for (const [tier, has] of Object.entries(config.keys)) { $("key-chips").append(el("span", "chip" + (has ? " on" : ""), tier + (has ? " ✓" : " –"))); }
   for (const s of config.scenarios) { const o = el("option", null, s.name); o.value = s.name; $("scenario").append(o); }
   const help = () => { const s = config.scenarios.find((x) => x.name === $("scenario").value); $("scenario-help").textContent = s ? s.help : ""; };
   $("scenario").onchange = help; help();
-  $("pace").value = config.pace.default; $("pace-val").textContent = config.pace.default.toFixed(1) + " s";
-  $("pace").oninput = () => { $("pace-val").textContent = parseFloat($("pace").value).toFixed(1) + " s"; };
-  $("pace").onchange = () => { if (runId) post("/api/runs/" + runId + "/pace", { pace: parseFloat($("pace").value) }); };
   $("run").onclick = startRun;
   $("clear").onclick = () => { $("chat").innerHTML = ""; $("chat").append(el("div", "empty", "Cleared.")); $("chat").firstChild.id = "empty";
     $("notes").innerHTML = ""; $("cards").innerHTML = '<div class="sub">Booked deals and approval holds appear here.</div>';
@@ -471,13 +867,16 @@ async function init() {
   if (config.live_feed) {
     $("live-wrap").hidden = false;
     $("live").onchange = () => {
-      if ($("live").checked) { mode = "live"; $("run").disabled = true; setStatus("Watching live feed", "running"); connect("/api/live/events"); }
-      else { mode = "mine"; if (source) source.close(); source = null; $("run").disabled = false; setStatus("Idle"); }
+      resetPlayer();
+      if ($("live").checked) { mode = "live"; $("run").disabled = $("bar-run").disabled = true; setStatus("Watching live feed", "running"); connect("/api/live/events"); }
+      else { mode = "mine"; if (source) source.close(); source = null; $("run").disabled = $("bar-run").disabled = false; setStatus("Idle"); }
+      renderBar();
     };
   }
   if (config.mode === "hosted" && config.rate_limit.runs > 0) {
     addNote("INFO", "Up to " + config.rate_limit.runs + " runs per " + Math.round(config.rate_limit.window_seconds / 60) + " minutes per visitor. Runs queue if someone else is running.");
   }
+  layout();
 }
 init();
 </script>
