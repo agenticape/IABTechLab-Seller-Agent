@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agenticape · Buyer ↔ Seller agent demo (sandbox)</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --panel2: #1d2639; --line: #2a3550;
+    --text: #e7ecf5; --muted: #94a0b8; --buyer: #4f8cff; --seller: #a46bff;
+    --ok: #2fbf71; --ok-bg: #12301f; --amber: #f0a92e; --amber-bg: #33270f;
+    --red: #ef5a5a; --red-bg: #361616; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
+  .banner { background: repeating-linear-gradient(45deg, #3a2c0c, #3a2c0c 12px, #33270b 12px, #33270b 24px);
+    color: #ffd98a; padding: 8px 18px; font-weight: 600; border-bottom: 1px solid #5a4416; }
+  .banner small { font-weight: 400; color: #f4d79c; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline;
+    padding: 14px 18px 6px; }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: .2px; }
+  header h1 .brand { color: var(--seller); }
+  .sub { color: var(--muted); font-size: 13px; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+    border: 1px solid var(--line); margin-left: 4px; color: var(--muted); }
+  .chip.on { color: #bff0d4; border-color: #2c6b48; background: #10291c; }
+  details.explain { margin: 4px 18px 10px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px 14px; }
+  details.explain summary { cursor: pointer; font-weight: 600; }
+  details.explain ul { margin: 8px 0 4px; padding-left: 20px; color: #c9d2e3; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+    margin: 0 18px 12px; padding: 10px 14px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; }
+  .controls label { color: var(--muted); font-size: 13px; }
+  select, button { font: inherit; color: var(--text); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  button { cursor: pointer; }
+  button.primary { background: #2c5ed6; border-color: #3b6ff0; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input[type=range] { width: 140px; vertical-align: middle; }
+  .help { color: var(--muted); font-size: 12px; flex-basis: 100%; }
+  .pill { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    background: var(--panel2); border: 1px solid var(--line); }
+  .pill.running { color: #bcd3ff; border-color: #36579c; }
+  .pill.waiting { color: var(--amber); border-color: #6b4f17; background: var(--amber-bg); }
+  .pill.done { color: #bff0d4; border-color: #2c6b48; }
+  .pill.error { color: #ffc2c2; border-color: #7a2c2c; background: var(--red-bg); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; padding: 0 18px 18px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .stage { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    display: flex; flex-direction: column; min-height: 520px; max-height: calc(100vh - 230px); }
+  .avatars { display: grid; grid-template-columns: 170px 1fr 170px; align-items: center;
+    padding: 14px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0;
+    background: var(--panel); border-radius: 12px 12px 0 0; z-index: 2; }
+  .agent { text-align: center; }
+  .agent svg { width: 72px; height: 72px; transition: transform .2s, filter .2s; }
+  .agent.talking svg { transform: scale(1.08); filter: drop-shadow(0 0 10px rgba(130,160,255,.55)); }
+  .agent .name { font-weight: 600; margin-top: 4px; }
+  .agent .role { color: var(--muted); font-size: 12px; }
+  .lane { position: relative; height: 56px; text-align: center; }
+  .lane .track { position: absolute; left: 6%; right: 6%; top: 27px; height: 2px;
+    background: linear-gradient(90deg, var(--buyer), var(--seller)); opacity: .35; }
+  .lane .packet { position: absolute; top: 19px; left: 6%; width: 18px; height: 18px;
+    border-radius: 50%; background: var(--buyer); box-shadow: 0 0 12px var(--buyer); opacity: 0; }
+  .lane.flying .packet { opacity: 1; animation: fly 0.9s ease-in-out infinite; }
+  .lane .what { position: absolute; left: 0; right: 0; top: 34px; font: 12px var(--mono); color: var(--muted); }
+  @keyframes fly { 0% { left: 6%; } 100% { left: calc(94% - 18px); } }
+  .chat { overflow-y: auto; padding: 14px 16px 20px; flex: 1; }
+  .divider { text-align: center; color: var(--muted); font-size: 12px; margin: 16px 0 8px; }
+  .divider b { color: var(--text); }
+  .row { display: flex; margin: 8px 0; }
+  .row.buyer { justify-content: flex-start; }
+  .row.seller { justify-content: flex-end; }
+  .bubble { max-width: 78%; padding: 9px 13px; border-radius: 14px; position: relative;
+    animation: pop .18s ease-out; }
+  @keyframes pop { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .row.buyer .bubble { background: #1b2c52; border: 1px solid #2d4a86; border-bottom-left-radius: 4px; }
+  .row.seller .bubble { background: var(--panel2); border: 1px solid var(--line); border-bottom-right-radius: 4px; }
+  .bubble .who { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  .bubble.ok { background: var(--ok-bg); border-color: #2c6b48; }
+  .bubble.counter, .bubble.pending { background: var(--amber-bg); border-color: #6b4f17; }
+  .bubble.refused { background: var(--red-bg); border-color: #7a2c2c; }
+  .bubble .tag { font-size: 11px; font-weight: 700; letter-spacing: .4px; margin-right: 6px; }
+  .bubble.ok .tag { color: var(--ok); } .bubble.counter .tag, .bubble.pending .tag { color: var(--amber); }
+  .bubble.refused .tag { color: var(--red); }
+  .meta { font: 11px var(--mono); color: var(--muted); margin-top: 6px; }
+  .meta details { margin-top: 4px; }
+  .meta summary { cursor: pointer; color: #9fb4ff; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #0b1019; border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px; max-height: 320px; overflow: auto; font: 11.5px/1.4 var(--mono);
+    color: #cfd8ea; margin: 6px 0 0; }
+  .typing span { display: inline-block; width: 7px; height: 7px; margin: 0 2px; border-radius: 50%;
+    background: var(--muted); animation: blink 1s infinite; }
+  .typing span:nth-child(2) { animation-delay: .15s; } .typing span:nth-child(3) { animation-delay: .3s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+  .empty { color: var(--muted); text-align: center; margin-top: 80px; }
+  aside { display: flex; flex-direction: column; gap: 14px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .panel h2 { margin: 0 0 8px; font-size: 14px; }
+  .card { border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; border: 1px solid var(--line);
+    animation: pop .2s ease-out; }
+  .card.deal { background: var(--ok-bg); border-color: #2c6b48; }
+  .card.approval { background: var(--amber-bg); border-color: #6b4f17; }
+  .card h3 { margin: 0 0 6px; font-size: 13px; }
+  .card dl { display: grid; grid-template-columns: 92px 1fr; gap: 2px 8px; margin: 0; font-size: 12px; }
+  .card dt { color: var(--muted); } .card dd { margin: 0; font-family: var(--mono); word-break: break-all; }
+  .notes { list-style: none; padding: 0; margin: 0; max-height: 420px; overflow-y: auto; font-size: 12.5px; }
+  .notes li { padding: 6px 0; border-bottom: 1px dashed var(--line); }
+  .notes .k { font: 10px var(--mono); font-weight: 700; padding: 1px 5px; border-radius: 4px; margin-right: 6px; }
+  .notes .k.INFO { background: #22304d; color: #a9c1ff; } .notes .k.NOTE { background: #3b2d10; color: #ffd27a; }
+  .notes .k.RUN { background: #1f3a2b; color: #a8ecc6; }
+  footer { color: var(--muted); font-size: 12px; padding: 0 18px 18px; }
+</style>
+</head>
+<body>
+<div class="banner">
+  Sandbox demo · mock inventory · mock buyers.
+  <small>Nothing here is real media or real spend. Each run creates fictional quotes, negotiations,
+  deals and approval holds on the agenticape sandbox seller. Approvals are never decided by this page.</small>
+</div>
+<header>
+  <h1><span class="brand">agenticape</span> · Buyer ↔ Seller agent demo</h1>
+  <span class="sub">Seller: <span id="seller-url">…</span></span>
+  <span class="sub">Buyer keys:<span id="key-chips"></span></span>
+</header>
+<details class="explain" open>
+  <summary>What you're watching</summary>
+  <ul>
+    <li>On the left, a <b>buyer agent</b> (a script acting for a fictional advertiser) talks to a
+      <b>seller agent</b> on the right: an IAB Tech Lab reference seller running mock inventory.</li>
+    <li>Each exchange is one real HTTP call to the seller's REST API: catalog discovery, tiered pricing,
+      quotes, price negotiation and deal booking. The bubbles say in plain words what was asked and answered.</li>
+    <li>Green means the seller agreed, amber means it countered or held the request for a human,
+      red means it refused (for example, writes with no API key). Click <i>details</i> for the raw JSON.</li>
+    <li>Bookings over $250,000 are held for human approval (HTTP 202). This page never approves them.</li>
+  </ul>
+</details>
+<div class="controls">
+  <label for="scenario">Scenario</label>
+  <select id="scenario"></select>
+  <button id="run" class="primary">Run</button>
+  <label for="pace">Pause between steps</label>
+  <input id="pace" type="range" min="0" max="3" step="0.1" value="1.2">
+  <span id="pace-val" class="sub">1.2 s</span>
+  <button id="clear">Clear</button>
+  <label id="live-wrap" hidden><input id="live" type="checkbox"> Watch live feed (everyone's runs)</label>
+  <span id="status" class="pill">Idle</span>
+  <div id="scenario-help" class="help"></div>
+</div>
+<main>
+  <section class="stage">
+    <div class="avatars">
+      <div class="agent" id="buyer-agent">
+        <svg viewBox="0 0 80 80" aria-hidden="true">
+          <circle cx="40" cy="40" r="38" fill="#1b2c52" stroke="#4f8cff" stroke-width="3"/>
+          <rect x="20" y="24" width="40" height="32" rx="10" fill="#4f8cff"/>
+          <circle cx="32" cy="40" r="5" fill="#0f1420"/><circle cx="48" cy="40" r="5" fill="#0f1420"/>
+          <rect x="33" y="49" width="14" height="3" rx="1.5" fill="#0f1420"/>
+          <line x1="40" y1="24" x2="40" y2="14" stroke="#4f8cff" stroke-width="3"/>
+          <circle cx="40" cy="12" r="4" fill="#9fc0ff"/>
+          <text x="40" y="72" text-anchor="middle" font-size="9" fill="#9fc0ff" font-family="sans-serif">BUY</text>
+        </svg>
+        <div class="name">Buyer agent</div>
+        <div class="role" id="buyer-role">(waiting)</div>
+      </div>
+      <div class="lane" id="lane"><div class="track"></div><div class="packet"></div><div class="what" id="lane-what"></div></div>
+      <div class="agent" id="seller-agent">
+        <svg viewBox="0 0 80 80" aria-hidden="true">
+          <circle cx="40" cy="40" r="38" fill="#2a1d46" stroke="#a46bff" stroke-width="3"/>
+          <rect x="18" y="22" width="44" height="34" rx="8" fill="#a46bff"/>
+          <rect x="26" y="34" width="10" height="6" rx="2" fill="#0f1420"/><rect x="44" y="34" width="10" height="6" rx="2" fill="#0f1420"/>
+          <path d="M30 48 Q40 54 50 48" stroke="#0f1420" stroke-width="3" fill="none"/>
+          <rect x="34" y="12" width="12" height="10" rx="2" fill="#d3b8ff"/>
+          <text x="40" y="72" text-anchor="middle" font-size="9" fill="#d3b8ff" font-family="sans-serif">SELL</text>
+        </svg>
+        <div class="name">Seller agent</div>
+        <div class="role">sandbox publisher</div>
+      </div>
+    </div>
+    <div class="chat" id="chat"><div class="empty" id="empty">Pick a scenario and press <b>Run</b>.</div></div>
+  </section>
+  <aside>
+    <div class="panel"><h2>Deals &amp; approvals</h2><div id="cards"><div class="sub">Booked deals and approval holds appear here.</div></div></div>
+    <div class="panel"><h2>Notes</h2><ul class="notes" id="notes"></ul></div>
+  </aside>
+</main>
+<footer>agenticape sandbox · buyer demo for the IAB Tech Lab reference seller agent · mock data only</footer>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const MIN_FLIGHT_MS = 450;
+const TONE_TAG = { ok: "OK", counter: "COUNTER", pending: "PENDING", refused: "REFUSED" };
+
+let config = null, source = null, runId = null, mode = "mine";
+let queue = [], draining = false, pendingBubbles = {}, startedAt = {};
+
+function setStatus(text, cls) { const s = $("status"); s.textContent = text; s.className = "pill " + (cls || ""); }
+function scrollChat() { const c = $("chat"); c.scrollTop = c.scrollHeight; }
+function chat() { const e = $("empty"); if (e) e.remove(); return $("chat"); }
+function roleFor(who) { return !who || who === "public" || who === "anonymous" ? "(no key)" : "(" + who + " key)"; }
+
+function addNote(kind, text) {
+  const li = el("li"); li.append(el("span", "k " + kind, kind), document.createTextNode(text));
+  $("notes").append(li); $("notes").scrollTop = $("notes").scrollHeight;
+}
+function addDivider(html) { const d = el("div", "divider"); d.append(...html); chat().append(d); scrollChat(); }
+function pretty(v) { try { return JSON.stringify(v, null, 2); } catch (e) { return String(v); } }
+
+function addCard(ev) {
+  const cards = $("cards"); if (cards.firstElementChild && cards.firstElementChild.classList.contains("sub")) cards.innerHTML = "";
+  const c = el("div", "card " + ev.kind); c.append(el("h3", null, (ev.run_label && mode === "live" ? ev.run_label + " · " : "") + ev.title));
+  const dl = el("dl");
+  for (const [k, v] of Object.entries(ev.fields || {})) {
+    if (v == null || v === "") continue;
+    dl.append(el("dt", null, k), el("dd", null, Array.isArray(v) ? v.join(", ") : String(v)));
+  }
+  c.append(dl); cards.prepend(c);
+}
+
+function onCallStart(ev) {
+  $("buyer-role").textContent = roleFor(ev.who);
+  $("buyer-agent").classList.add("talking"); $("seller-agent").classList.remove("talking");
+  $("lane").classList.add("flying"); $("lane-what").textContent = ev.method + " " + ev.path;
+  const row = el("div", "row buyer"); const b = el("div", "bubble");
+  b.append(el("div", "who", "Buyer agent " + roleFor(ev.who) + (mode === "live" && ev.run_label ? " · run " + ev.run_label : "")), el("div", null, ev.say || ev.method + " " + ev.path));
+  row.append(b); chat().append(row);
+  const srow = el("div", "row seller"); const sb = el("div", "bubble typing");
+  sb.append(el("span"), el("span"), el("span")); srow.append(sb); chat().append(srow);
+  pendingBubbles[key(ev)] = { row: srow, request: { method: ev.method, path: ev.path, as: ev.who, params: ev.params || undefined, headers: ev.request_headers, body: ev.request_body } };
+  startedAt[key(ev)] = performance.now(); scrollChat();
+}
+
+async function onCallEnd(ev) {
+  const k = key(ev); const wait = MIN_FLIGHT_MS - (performance.now() - (startedAt[k] || 0));
+  if (wait > 0) await sleep(wait);
+  const pend = pendingBubbles[k]; delete pendingBubbles[k];
+  const row = pend ? pend.row : el("div", "row seller"); row.innerHTML = "";
+  const tone = ev.tone || "ok"; const b = el("div", "bubble " + tone);
+  const line = el("div"); line.append(el("span", "tag", TONE_TAG[tone] || ""), document.createTextNode(ev.reply || String(ev.status_code)));
+  b.append(el("div", "who", "Seller agent"), line);
+  const meta = el("div", "meta", ev.method + " " + ev.path + " · " + ev.status_code + " · " + ev.latency_ms + " ms");
+  const det = el("details"); det.append(el("summary", null, "details"));
+  det.append(el("div", null, "Request"), el("pre", null, pretty(pend ? pend.request : { method: ev.method, path: ev.path, body: ev.request_body })));
+  det.append(el("div", null, "Response (trimmed)"), el("pre", null, pretty(ev.response !== undefined ? ev.response : { error: ev.error, message: ev.error_message })));
+  meta.append(det); b.append(meta); row.append(b);
+  if (!pend) chat().append(row);
+  $("lane").classList.remove("flying"); $("lane-what").textContent = "";
+  $("buyer-agent").classList.remove("talking"); $("seller-agent").classList.add("talking");
+  setTimeout(() => $("seller-agent").classList.remove("talking"), 600);
+  scrollChat();
+}
+function key(ev) { return (ev.run_label || "") + ":" + ev.seq; }
+
+async function handle(ev) {
+  switch (ev.type) {
+    case "run_queued":
+      if (mode === "mine") setStatus(ev.position > 1 ? "Waiting: " + (ev.position - 1) + " run(s) ahead" : "Waiting: next up", "waiting");
+      break;
+    case "run_start":
+      if (mode === "mine") setStatus("Running", "running");
+      addDivider([el("b", null, "Run " + (ev.run_label || "")), document.createTextNode(" started · " + ev.scenarios.join(", "))]);
+      addNote("RUN", "Run " + (ev.run_label || "") + " started (" + ev.scenarios.join(", ") + ")");
+      break;
+    case "scenario_start":
+      addDivider([el("b", null, ev.name), document.createTextNode(" · " + ev.help)]); break;
+    case "call_start": onCallStart(ev); break;
+    case "call_end": await onCallEnd(ev); break;
+    case "card": addCard(ev); break;
+    case "note": addNote("INFO", ev.text); break;
+    case "finding": addNote("NOTE", ev.text); break;
+    case "run_end":
+      addNote("RUN", "Run " + (ev.run_label || "") + " finished. Log: " + ev.md_path);
+      if (mode === "mine") { setStatus("Done", "done"); finishRun(); }
+      break;
+    case "run_error":
+      addNote("RUN", ev.message);
+      if (mode === "mine") { setStatus("Stopped", "error"); finishRun(); }
+      break;
+  }
+}
+async function drain() {
+  if (draining) return; draining = true;
+  try { while (queue.length) { await handle(queue.shift()); } } finally { draining = false; }
+}
+function connect(url) {
+  if (source) source.close();
+  source = new EventSource(url);
+  source.onmessage = (m) => { try { queue.push(JSON.parse(m.data)); drain(); } catch (e) {} };
+  source.addEventListener("end", () => { source.close(); source = null; });
+}
+function finishRun() { runId = null; $("run").disabled = $("live").checked; }
+
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-Demo-Client": "1" },
+    body: JSON.stringify(body), credentials: "same-origin" });
+  let data = {}; try { data = await r.json(); } catch (e) {}
+  return { status: r.status, data };
+}
+
+async function startRun() {
+  $("run").disabled = true;
+  const res = await post("/api/runs", { scenario: $("scenario").value, pace: parseFloat($("pace").value) });
+  if (res.status !== 202) {
+    const msg = (res.data && res.data.message) || ("HTTP " + res.status);
+    setStatus(res.status === 429 ? "Rate limited" : "Not started", "error"); addNote("RUN", msg);
+    $("run").disabled = false; return;
+  }
+  runId = res.data.run_id; setStatus("Waiting", "waiting"); connect(res.data.events_url);
+}
+
+async function init() {
+  const r = await fetch("/api/config", { credentials: "same-origin" }); config = await r.json();
+  $("seller-url").textContent = config.seller_url;
+  for (const [tier, has] of Object.entries(config.keys)) { $("key-chips").append(el("span", "chip" + (has ? " on" : ""), tier + (has ? " ✓" : " –"))); }
+  for (const s of config.scenarios) { const o = el("option", null, s.name); o.value = s.name; $("scenario").append(o); }
+  const help = () => { const s = config.scenarios.find((x) => x.name === $("scenario").value); $("scenario-help").textContent = s ? s.help : ""; };
+  $("scenario").onchange = help; help();
+  $("pace").value = config.pace.default; $("pace-val").textContent = config.pace.default.toFixed(1) + " s";
+  $("pace").oninput = () => { $("pace-val").textContent = parseFloat($("pace").value).toFixed(1) + " s"; };
+  $("pace").onchange = () => { if (runId) post("/api/runs/" + runId + "/pace", { pace: parseFloat($("pace").value) }); };
+  $("run").onclick = startRun;
+  $("clear").onclick = () => { $("chat").innerHTML = ""; $("chat").append(el("div", "empty", "Cleared.")); $("chat").firstChild.id = "empty";
+    $("notes").innerHTML = ""; $("cards").innerHTML = '<div class="sub">Booked deals and approval holds appear here.</div>'; };
+  if (config.live_feed) {
+    $("live-wrap").hidden = false;
+    $("live").onchange = () => {
+      if ($("live").checked) { mode = "live"; $("run").disabled = true; setStatus("Watching live feed", "running"); connect("/api/live/events"); }
+      else { mode = "mine"; if (source) source.close(); source = null; $("run").disabled = false; setStatus("Idle"); }
+    };
+  }
+  if (config.mode === "hosted" && config.rate_limit.runs > 0) {
+    addNote("INFO", "Up to " + config.rate_limit.runs + " runs per " + Math.round(config.rate_limit.window_seconds / 60) + " minutes per visitor. Runs queue if someone else is running.");
+  }
+}
+init();
+</script>
+</body>
+</html>

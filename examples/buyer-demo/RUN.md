@@ -110,7 +110,9 @@ cd IABTechLab-Seller-Agent\examples\buyer-demo
 uv sync
 ```
 
-Python 3.11+ is required. The only dependency is `httpx`.
+Python 3.11+ is required. The dependencies are `httpx` and `tzdata` (zone
+data for the Australia/Sydney log times; Windows Python has none built in,
+so no `--with tzdata` is needed any more).
 
 The Fly app may be scaled to zero. The first request can take several
 seconds (cold start). The default HTTP timeout is 60s.
@@ -170,6 +172,67 @@ approval. Do not approve or reject it unless you mean to.
 The suite is not the default. Running the script with no arguments prints
 help and exits.
 
+## Watch it in the browser (`--ui`)
+
+The same scenarios, shown as a buyer agent and a seller agent talking. Each
+call is a pair of plain-language speech bubbles (green agreed, amber counter
+or held for approval, red refused), with method, path, status and latency
+underneath and the raw request/response one click away. A side panel shows
+deal and approval cards and the running notes.
+
+Windows PowerShell, first time:
+
+```powershell
+git clone https://github.com/agenticape/IABTechLab-Seller-Agent.git
+cd IABTechLab-Seller-Agent
+git checkout demo/buyer-demo
+cd examples\buyer-demo
+uv sync
+```
+
+Already cloned:
+
+```powershell
+cd IABTechLab-Seller-Agent
+git fetch origin
+git checkout demo/buyer-demo
+git pull origin demo/buyer-demo
+cd examples\buyer-demo
+uv sync
+```
+
+Then set the seller and keys (as above) and start the UI:
+
+```powershell
+$env:SELLER_URL = "https://iab-seller.agenticape.ai"
+$env:KEYS_FILE = "C:\path\to\keys.fly.json"     # or set $env:SELLER_API_KEY etc.
+uv run python buyer_demo.py --ui
+```
+
+Your browser opens <http://127.0.0.1:8765/>. Pick a scenario (or `all`), set
+the pause between steps (0 to 3 seconds; about 1.2 s is easy to follow),
+press **Run**, and **Clear** to start over. Stop the server with Ctrl+C in
+the PowerShell window. Options: `--port 9000` for another port,
+`--no-browser` to only print the URL.
+
+The page is served from your machine only (127.0.0.1) and works offline: no
+CDN, no build step. API keys stay in the Python process; the browser only
+sees `***REDACTED***` and which tiers have a key. Every run still writes the
+`runs/` markdown and JSON logs, exactly as the CLI does, and the terminal
+shows the usual CLI lines as the run goes.
+
+The hosted copy at <https://iab-buyer.agenticape.ai> is the same page in
+`--serve` mode. See `deploy/fly/DEPLOY.md`.
+
+## Tests
+
+```powershell
+uv run pytest
+```
+
+They use an in-process fake seller (no network) and cover the event stream,
+key redaction, the CLI lines, and the web server's guardrails.
+
 ## Logs
 
 Each scenario run writes two files under `runs/` (gitignored):
@@ -180,4 +243,4 @@ Each scenario run writes two files under `runs/` (gitignored):
 API key headers and values are redacted. Keep these logs off git and off
 any public paste if you are unsure.
 
-Optional flags: `--seller-url URL`, `--timeout 60`.
+Optional flags: `--seller-url URL`, `--timeout 60`, `--ui`, `--port`, `--no-browser`, `--serve`, `--host`.

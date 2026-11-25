@@ -5,6 +5,10 @@ Sends the standard seller-agent / AdCP REST requests (discovery, pricing,
 quotes, negotiation, booking) and writes a trimmed request/response log.
 Mock buyer identity only. Never logs API keys. Never approves or rejects
 seller approvals.
+
+Every step is emitted as a structured event (see ``Recorder.emit``). The
+terminal output is one listener (``cli_printer``); ``--ui`` adds a second
+that streams the same events to a local browser page (``demo_ui.py``).
 """
 
 from __future__ import annotations
@@ -16,10 +20,11 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 import httpx
+from narration import CallContext, describe_request, describe_response
 
 # ---------------------------------------------------------------------------
 # Defaults and catalog hints (fictional aws_workshop mock catalog)
@@ -340,32 +345,65 @@ def load_keys() -> Keys:
 # ---------------------------------------------------------------------------
 
 
+Listener = Callable[[dict], None]
+
+
+def cli_printer(event: dict) -> None:
+    """Terminal output for one event (the demo's original CLI lines)."""
+    kind = event.get("type")
+    if kind == "run_start":
+        print(f"Buyer demo against {event['seller_url']}", flush=True)
+        print(f"Scenarios: {', '.join(event['scenarios'])}", flush=True)
+        print(f"Key source: {event['key_source']}", flush=True)
+        print(f"Run id: {event['run_id']}", flush=True)
+    elif kind == "scenario_start":
+        print(f"\n=== {event['name']}: {event['help']} ===", flush=True)
+    elif kind == "note":
+        print(f"  [INFO] {event['text']}", flush=True)
+    elif kind == "finding":
+        print(f"  [NOTE] {event['text']}", flush=True)
+    elif kind == "call_end":
+        status = event.get("status_code")
+        latency = event.get("latency_ms")
+        title = f"{event.get('method')} {event.get('path')} as {event.get('who')}"
+        print(f"  [{status}] {title}  ({latency} ms)", flush=True)
+        highlights = event.get("highlights") or {}
+        if highlights:
+            summary = ", ".join(f"{k}={v}" for k, v in highlights.items())
+            print(f"         {summary}", flush=True)
+    elif kind == "run_end":
+        print(f"\nWrote {event['md_path']}", flush=True)
+        print(f"Wrote {event['json_path']}", flush=True)
+
+
 class Recorder:
-    def __init__(self, secrets: list[str]) -> None:
+    """Collects the run log and emits every step as a redacted event."""
+
+    def __init__(self, secrets: list[str], listeners: Optional[list[Listener]] = None) -> None:
         self.secrets = secrets
+        self.listeners: list[Listener] = list(listeners) if listeners is not None else [cli_printer]
         self.calls: list[dict] = []
         self.notes: list[str] = []
         self.findings: list[str] = []
 
+    def emit(self, event: dict) -> None:
+        safe = redact(event, self.secrets)
+        for listener in self.listeners:
+            listener(safe)
+
     def note(self, message: str) -> None:
         self.notes.append(message)
-        print(f"  [INFO] {message}", flush=True)
+        self.emit({"type": "note", "text": message})
 
     def finding(self, message: str) -> None:
         self.findings.append(message)
-        print(f"  [NOTE] {message}", flush=True)
+        self.emit({"type": "finding", "text": message})
 
-    def record(self, entry: dict) -> None:
+    def record(self, entry: dict, extra: Optional[dict] = None) -> None:
+        """Log one finished call. ``extra`` goes to listeners only, not the log."""
         safe = redact(entry, self.secrets)
         self.calls.append(safe)
-        status = safe.get("status_code")
-        latency = safe.get("latency_ms")
-        title = f"{safe.get('method')} {safe.get('path')} as {safe.get('who')}"
-        print(f"  [{status}] {title}  ({latency} ms)", flush=True)
-        highlights = safe.get("highlights") or {}
-        if highlights:
-            summary = ", ".join(f"{k}={v}" for k, v in highlights.items())
-            print(f"         {summary}", flush=True)
+        self.emit({"type": "call_end", **safe, **(extra or {})})
 
 
 class SellerClient:
@@ -375,14 +413,29 @@ class SellerClient:
         keys: Keys,
         recorder: Recorder,
         timeout: float,
+        pacer: Optional[Callable[[], None]] = None,
+        transport: Optional[httpx.BaseTransport] = None,
+        run_id: Optional[str] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.keys = keys
         self.recorder = recorder
-        self.client = httpx.Client(base_url=self.base_url, timeout=timeout, follow_redirects=True)
+        self.pacer = pacer
+        self.run_id = run_id or uuid.uuid4().hex[:12]
+        self.context = CallContext()
+        self.seq = 0
+        self.client = httpx.Client(
+            base_url=self.base_url,
+            timeout=timeout,
+            follow_redirects=True,
+            transport=transport,
+        )
 
     def close(self) -> None:
         self.client.close()
+
+    def idem(self, label: str) -> str:
+        return f"buyer-demo-{self.run_id}-{label}"
 
     def call(
         self,
@@ -393,9 +446,29 @@ class SellerClient:
         params: Optional[dict] = None,
         extract: Optional[list[str]] = None,
     ) -> httpx.Response:
+        if method.upper() != "GET" and path.rstrip("/").startswith("/approvals"):
+            # Approval decisions belong to the seller's operator, never to this demo.
+            raise ValueError(f"buyer demo refuses {method} {path}")
         headers: dict[str, str] = {}
         if who not in ("public", "anonymous"):
             headers["X-Api-Key"] = self.keys.require(who)
+        if self.pacer is not None:
+            self.pacer()
+        self.seq += 1
+        seq = self.seq
+        self.recorder.emit(
+            {
+                "type": "call_start",
+                "seq": seq,
+                "method": method,
+                "path": path,
+                "who": who,
+                "params": params,
+                "request_headers": headers,
+                "request_body": trim_body(body),
+                "say": describe_request(method, path, who, body, params, self.context),
+            }
+        )
         started = datetime.now(timezone.utc)
         try:
             resp = self.client.request(method, path, json=body, headers=headers, params=params)
@@ -412,7 +485,11 @@ class SellerClient:
                     "error": type(exc).__name__,
                     "error_message": str(exc),
                     "highlights": {"error": type(exc).__name__},
-                }
+                },
+                extra={
+                    "seq": seq,
+                    **describe_response(method, path, who, body, "ERROR", None, self.context),
+                },
             )
             raise
 
@@ -424,6 +501,10 @@ class SellerClient:
             parsed = resp.text
 
         highlights = _highlights(parsed, extract, resp.status_code)
+        caption = describe_response(
+            method, path, who, body, resp.status_code, parsed, self.context
+        )
+        card = caption.pop("card", None)
         self.recorder.record(
             {
                 "method": method,
@@ -434,8 +515,11 @@ class SellerClient:
                 "latency_ms": elapsed,
                 "response": trim_body(parsed),
                 "highlights": highlights,
-            }
+            },
+            extra={"seq": seq, **caption},
         )
+        if card:
+            self.recorder.emit({"type": "card", "seq": seq, **card})
         return resp
 
 
@@ -609,7 +693,7 @@ def scenario_pricing(s: SellerClient, rec: Recorder) -> None:
         "/api/v1/quotes",
         who="advertiser",
         body={
-            "idempotency_key": _idem("quote-pd-series"),
+            "idempotency_key": s.idem("quote-pd-series"),
             "product_id": pid,
             "deal_type": "PD",
             "impressions": 1_000_000,
@@ -683,7 +767,7 @@ def _quote(
         "/api/v1/quotes",
         who=who,
         body={
-            "idempotency_key": _idem(label),
+            "idempotency_key": s.idem(label),
             "product_id": pid,
             "deal_type": "PD",
             "impressions": imps,
@@ -716,7 +800,7 @@ def _counter(
         "/api/v1/negotiations/messages",
         who=who,
         body={
-            "idempotency_key": _idem(label),
+            "idempotency_key": s.idem(label),
             "action": "counter",
             "quote_id": quote_id,
             "buyer_price": micros(offer),
@@ -755,7 +839,7 @@ def scenario_booking(s: SellerClient, rec: Recorder) -> None:
         "/api/v1/quotes",
         who="advertiser",
         body={
-            "idempotency_key": _idem("quote-small"),
+            "idempotency_key": s.idem("quote-small"),
             "product_id": PRODUCT_DISPLAY,
             "deal_type": "PD",
             "impressions": SMALL_IMPS,
@@ -777,7 +861,7 @@ def scenario_booking(s: SellerClient, rec: Recorder) -> None:
             "POST",
             "/api/v1/deals",
             who="advertiser",
-            body={"idempotency_key": _idem("book-small"), "quote_id": qid},
+            body={"idempotency_key": s.idem("book-small"), "quote_id": qid},
             extract=["deal_id", "status"],
         )
         if r.status_code == 200:
@@ -801,7 +885,7 @@ def scenario_booking(s: SellerClient, rec: Recorder) -> None:
         "/api/v1/quotes",
         who="advertiser",
         body={
-            "idempotency_key": _idem("quote-large"),
+            "idempotency_key": s.idem("quote-large"),
             "product_id": PRODUCT_CTV_NBA,
             "deal_type": "PD",
             "impressions": LARGE_IMPS,
@@ -830,7 +914,7 @@ def scenario_booking(s: SellerClient, rec: Recorder) -> None:
         "POST",
         "/api/v1/deals",
         who="advertiser",
-        body={"idempotency_key": _idem("book-large"), "quote_id": qid},
+        body={"idempotency_key": s.idem("book-large"), "quote_id": qid},
         extract=["deal_id", "status", "approval_id"],
     )
     if r.status_code == 202:
@@ -852,7 +936,7 @@ def scenario_anon_write(s: SellerClient, rec: Recorder) -> None:
         "POST",
         "/api/v1/quotes",
         body={
-            "idempotency_key": _idem("anon-quote"),
+            "idempotency_key": s.idem("anon-quote"),
             "product_id": PRODUCT_DISPLAY,
             "deal_type": "PD",
             "impressions": 100_000,
@@ -863,7 +947,7 @@ def scenario_anon_write(s: SellerClient, rec: Recorder) -> None:
     s.call(
         "POST",
         "/api/v1/deals",
-        body={"idempotency_key": _idem("anon-book"), "quote_id": "qt-does-not-exist"},
+        body={"idempotency_key": s.idem("anon-book"), "quote_id": "qt-does-not-exist"},
     )
     s.call(
         "POST",
@@ -939,13 +1023,6 @@ SCENARIOS = {
     "anon-write": scenario_anon_write,
     "extras": scenario_extras,
 }
-
-_RUN_ID = ""
-
-
-def _idem(label: str) -> str:
-    return f"buyer-demo-{_RUN_ID}-{label}"
-
 
 # ---------------------------------------------------------------------------
 # Connectivity check (read-only)
@@ -1091,56 +1168,101 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=60.0,
         help="HTTP timeout in seconds (Fly may cold-start). Default: %(default)s",
     )
+    p.add_argument(
+        "--ui",
+        action="store_true",
+        help=(
+            "Open a local web page (127.0.0.1 only) that shows the buyer and seller "
+            "agents talking, step by step. Pick and run scenarios from the page."
+        ),
+    )
+    p.add_argument(
+        "--serve",
+        action="store_true",
+        help=(
+            "Hosted mode for the same page (e.g. Fly.io): no browser, keys from env, "
+            "per-IP rate limit, run queue, optional DEMO_UI_PASSWORD. See deploy/fly/DEPLOY.md."
+        ),
+    )
+    p.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address for --ui / --serve. Default: %(default)s",
+    )
+    p.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port for --ui (default 8765) or --serve (default $PORT or 8080).",
+    )
+    p.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="With --ui, do not open a browser window (print the URL only).",
+    )
     return p.parse_args(argv)
 
 
-def main(argv: list[str] | None = None) -> int:
-    global _RUN_ID
-    args = parse_args(argv if argv is not None else sys.argv[1:])
-    base_url = args.seller_url.rstrip("/")
-
-    if args.check:
-        return connectivity_check(base_url, args.timeout)
-
+def resolve_scenarios(names: list[str]) -> list[str]:
+    """Expand ``all`` and validate names, keeping the suite order for ``all``."""
     wanted: list[str] = []
-    if args.all:
-        wanted = list(SCENARIO_ORDER)
-    if args.scenarios:
-        for name in args.scenarios:
-            if name not in SCENARIOS:
+    for name in names:
+        expanded = list(SCENARIO_ORDER) if name == "all" else [name]
+        for item in expanded:
+            if item not in SCENARIOS:
                 raise SystemExit(
-                    f"Unknown scenario {name!r}. Choose from: {', '.join(SCENARIO_ORDER)}"
+                    f"Unknown scenario {item!r}. Choose from: {', '.join(SCENARIO_ORDER)}"
                 )
-            if name not in wanted:
-                wanted.append(name)
-    if not wanted:
-        print(
-            "No scenario selected. Use --check, --scenario NAME, or --all.\n"
-            "This tool does not run the suite by default (booking creates a deal "
-            "and a pending approval).\n",
-            file=sys.stderr,
-        )
-        parse_args(["--help"])
-        return 2
+            if item not in wanted:
+                wanted.append(item)
+    return wanted
 
-    keys = load_keys()
-    rec = Recorder(secrets=keys.secrets())
+
+def run_scenarios(
+    base_url: str,
+    wanted: list[str],
+    keys: Keys,
+    timeout: float,
+    listeners: Optional[list[Listener]] = None,
+    pacer: Optional[Callable[[], None]] = None,
+    transport: Optional[httpx.BaseTransport] = None,
+    keep_going: bool = False,
+) -> tuple[Path, Path]:
+    """Run the scenarios, emit every step to ``listeners``, write the logs.
+
+    The CLI and the ``--ui`` page both run through here. With
+    ``keep_going`` a scenario that stops for a missing key is reported as a
+    finding and the run continues (the UI); without it the run exits, as the
+    CLI always has.
+    """
+    rec = Recorder(secrets=keys.secrets(), listeners=listeners)
     started = now_local()
-    _RUN_ID = started.strftime("%Y%m%d%H%M%S") + uuid.uuid4().hex[:6]
+    run_id = started.strftime("%Y%m%d%H%M%S") + uuid.uuid4().hex[:6]
 
-    print(f"Buyer demo against {base_url}", flush=True)
-    print(f"Scenarios: {', '.join(wanted)}", flush=True)
-    print(f"Key source: {keys.source}", flush=True)
-    print(f"Run id: {_RUN_ID}", flush=True)
+    rec.emit(
+        {
+            "type": "run_start",
+            "seller_url": base_url,
+            "scenarios": wanted,
+            "key_source": keys.source,
+            "run_id": run_id,
+        }
+    )
 
-    client = SellerClient(base_url, keys, rec, timeout=args.timeout)
+    client = SellerClient(
+        base_url, keys, rec, timeout=timeout, pacer=pacer, transport=transport, run_id=run_id
+    )
     try:
         for name in wanted:
-            print(f"\n=== {name}: {SCENARIO_HELP[name]} ===", flush=True)
+            rec.emit({"type": "scenario_start", "name": name, "help": SCENARIO_HELP[name]})
             try:
                 SCENARIOS[name](client, rec)
             except httpx.RequestError as exc:
                 rec.finding(f"Scenario {name} stopped: {type(exc).__name__}: {exc}")
+            except SystemExit as exc:
+                if not keep_going:
+                    raise
+                rec.finding(f"Scenario {name} skipped: {exc}")
     finally:
         client.close()
 
@@ -1152,12 +1274,59 @@ def main(argv: list[str] | None = None) -> int:
             "seller_url": base_url,
             "scenarios": wanted,
             "key_source": keys.source,
-            "run_id": _RUN_ID,
+            "run_id": run_id,
         },
         rec,
     )
-    print(f"\nWrote {md_path}", flush=True)
-    print(f"Wrote {json_path}", flush=True)
+    rec.emit({"type": "run_end", "md_path": str(md_path), "json_path": str(json_path)})
+    return json_path, md_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv if argv is not None else sys.argv[1:])
+    base_url = args.seller_url.rstrip("/")
+
+    if args.check:
+        return connectivity_check(base_url, args.timeout)
+
+    if args.ui or args.serve:
+        import demo_ui
+
+        hosted = bool(args.serve)
+        port = args.port or (int(os.environ.get("PORT", "8080")) if hosted else 8765)
+        return demo_ui.serve(
+            demo_ui.settings_from_env(
+                hosted=hosted,
+                host=args.host,
+                port=port,
+                open_browser=not hosted and not args.no_browser,
+            ),
+            base_url=base_url,
+            keys=load_keys(),
+            timeout=args.timeout,
+            run=run_scenarios,
+            scenario_help=SCENARIO_HELP,
+            scenario_order=SCENARIO_ORDER,
+            printer=cli_printer,
+        )
+
+    requested: list[str] = []
+    if args.all:
+        requested.append("all")
+    requested += args.scenarios or []
+    wanted = resolve_scenarios(requested)
+    if not wanted:
+        print(
+            "No scenario selected. Use --check, --scenario NAME, --all, or --ui.\n"
+            "This tool does not run the suite by default (booking creates a deal "
+            "and a pending approval).\n",
+            file=sys.stderr,
+        )
+        parse_args(["--help"])
+        return 2
+
+    keys = load_keys()
+    run_scenarios(base_url, wanted, keys, args.timeout)
     return 0
 
 
