@@ -1,0 +1,14 @@
+# Local env and secrets — never commit
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+keys*.json
+*.pem
+
+# Run logs may contain request/response bodies; keep them local
+runs/*.json
+runs/*.md
+!runs/.gitkeep
